@@ -1,3 +1,8 @@
+"""
+Modified from upstream so-vits-svc (AGPL-3.0, svc-develop-team).
+Changes: CPU training support, max_steps/auto_stop, validation-loss logging.
+See NOTICE. 2026-08.
+"""
 import logging
 import multiprocessing
 import os

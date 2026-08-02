@@ -5,9 +5,12 @@
 
 ##  许可证
 
-本仓库使用 **AGPL-3.0** 许可证（见 LICENSE）。
-包含 [so-vits-svc](https://github.com/svc-develop-team/so-vits-svc) 的派生代码
-（inference/, modules/, diffusion/, utils.py 等），遵守上游开源协议。
+本项目是 [so-vits-svc](https://github.com/svc-develop-team/so-vits-svc)
+（**AGPL-3.0**）的派生作品，整体以 **AGPL-3.0** 协议发布（见 LICENSE 与 NOTICE）。
+
+- 保留上游 LICENSE 与版权归属，修改过的上游文件已在 NOTICE 中声明
+- 完整对应源码在本仓库公开，满足 AGPL-3.0 对网络服务提供源码的要求
+- 使用/二次分发本仓库时须遵守 AGPL-3.0：保留版权与修改声明、以相同协议分发
 
 ## 功能
 

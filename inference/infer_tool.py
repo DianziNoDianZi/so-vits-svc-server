@@ -3,6 +3,10 @@ import hashlib
 import io
 import json
 import logging
+"""
+Modified from upstream so-vits-svc (AGPL-3.0, svc-develop-team).
+Changes: diffusion config existence check fix. See NOTICE. 2026-08.
+"""
 import os
 import pickle
 import time
