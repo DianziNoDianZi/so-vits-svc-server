@@ -30,22 +30,22 @@ install.bat      :: 建 venv + 装 CPU/CUDA torch + 依赖（选 1=CPU / 2=CUDA�
 start.bat        :: 启动服务，访问 http://localhost:5000
 ```
 
-### Linux CPU 服务器（conda 版，推荐，全走国内镜像）
+### Linux 部署（全平台支持，全走国内镜像）
+
+本项目提供了一个整合的一键部署脚本，支持 **NVIDIA GPU、AMD GPU 和纯 CPU** 环境，自动切换 PyTorch 版本。
 
 ```bash
-cd /opt/so-vits-svc
-bash deploy_cpu_conda.sh --skip-models   # 跳过模型下载，部署后网页上传
-# 或不带 --skip-models 自动下载预训练模型
+# 下载脚本后赋予执行权限
+chmod +x deploy_linux.sh
+
+# 运行部署脚本（需 root 权限）
+sudo bash deploy_linux.sh
+
+# （可选）如果你的网络下载模型慢，可以加上 --skip-models 跳过模型下载，
+# 部署完成后再到网页后台手动上传预训练模型。
+# sudo bash deploy_linux.sh --skip-models
 ```
 
-脚本自动完成：系统库 → Miniconda（清华源）→ Python 3.9 环境 → CPU torch（无 nvidia 包）
-→ 全部依赖 → swap → **systemd 后台服务**（ssh 断开不掉、开机自启）。
-
-### Linux GPU 服务器
-
-```bash
-bash deploy_ubuntu.sh
-```
 
 ### Windows用户请特别注意
 项目依赖中的 onnxsim 在安装时需要通过源码编译，强制依赖系统级构建工具。
