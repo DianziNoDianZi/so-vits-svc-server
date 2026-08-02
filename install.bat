@@ -43,13 +43,15 @@ if errorlevel 1 (
 
 echo [2/4] Choose torch build:
 echo   1 = CPU (smaller, inference only, slow training)
-echo   2 = CUDA GPU (needed for real training, ~2.5GB download)
+echo   2 = NVIDIA CUDA GPU (needed for real training, ~2.5GB download)
+echo   3 = AMD ROCm GPU (for Radeon RX 5000/6000/7000 series)
 :torch_choice
 set "TORCH_CHOICE="
-set /p TORCH_CHOICE="Choice [1/2]: "
+set /p TORCH_CHOICE="Choice [1/2/3]: "
 if "%TORCH_CHOICE%"=="1" goto torch_cpu
 if "%TORCH_CHOICE%"=="2" goto torch_cuda
-echo Invalid choice, please enter 1 or 2.
+if "%TORCH_CHOICE%"=="3" goto torch_amd
+echo Invalid choice, please enter 1, 2 or 3.
 goto torch_choice
 
 :torch_cpu
@@ -63,7 +65,7 @@ if errorlevel 1 (
 goto install_reqs
 
 :torch_cuda
-echo Installing CUDA torch (cu121)...
+echo Installing NVIDIA CUDA torch (cu121)...
 "%VPY%" -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 if errorlevel 1 (
     echo [ERROR] torch install failed.
@@ -72,35 +74,48 @@ if errorlevel 1 (
 )
 goto install_reqs
 
+:torch_amd
+echo [提示] 安装 AMD ROCm 版本 PyTorch...
+echo 请确保电脑已安装 AMD 官方显卡驱动，并且拥有 RDNA 2.0 以上架构的显卡（如 RX 5000/6000/7000系列）。
+"%VPY%" -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm
+if errorlevel 1 (
+    echo [ERROR] AMD torch install failed.
+    pause
+    exit /b 1
+)
+goto install_reqs
+
 :install_reqs
 echo [3/4] Installing requirements...
+chcp 65001 >nul
 
-:: 1. 降级 pip 解决 omegaconf 元数据死锁问题
-echo   - Step 1: 降级 pip 至 24.1 版本...
+echo   - [Step 1] Fix requirements.txt encoding...
+"%VPY%" -c "import os; open('requirements.txt', 'w', encoding='utf-8').write(open('requirements.txt', 'r', encoding='utf-8', errors='ignore').read())"
+
+echo   - [Step 2] Pre-install pyyaml (using newer pip to avoid compile errors)...
+"%VPY%" -m pip install pyyaml -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+echo   - [Step 3] Downgrade pip to 19.2 (Bypass omegaconf metadata check)...
+"%VPY%" -m pip install pip==19.2
+
+echo   - [Step 4] Install all requirements...
+"%VPY%" -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+echo   - [Step 5] Upgrade pip back to 24.1 for speed...
 "%VPY%" -m pip install pip==24.1
 
-:: 2. 提前安装 omegaconf (阿里云镜像缺少2.0.6，强制切清华源解决)
-echo   - Step 2: 预装 omegaconf 2.0.6 (使用清华源)...
-"%VPY%" -m pip install omegaconf==2.0.6 -i https://pypi.tuna.tsinghua.edu.cn/simple
-
-:: 3. 预装 Python 版 cmake
-echo   - Step 3: 预装 Python cmake...
+echo   - [Step 6] Install python cmake...
 "%VPY%" -m pip install cmake
 
-:: 4. 正式安装项目依赖
-echo   - Step 4: 安装项目全部依赖...
-"%VPY%" -m pip install -r requirements.txt
 if errorlevel 1 (
     echo.
     echo [ERROR] requirements install failed.
     echo.
-    echo 【提示：如果你遇到 "Could not find 'cmake' executable!"】
-    echo 说明你电脑里缺少 Windows 系统级别的 CMake 软件。
-    echo 解决方法：
-    echo 1. 立即访问官网：https://cmake.org/download/
-    echo 2. 下载 Windows 64位版本 (.msi 安装包)。
-    echo 3. 安装时【务必勾选】 "Add CMake to the system PATH for all users"！
-    echo 4. 安装完成后，关掉当前 CMD 窗口，重新运行 install.bat 即可。
+    echo 【Windows用户请注意】：
+    echo 如果报错 "Could not find 'cmake' executable!"，说明你系统没有 CMake。
+    echo 解决方法：去官网 https://cmake.org/download/ 下载 .msi
+    echo 安装时【务必勾选】 "Add CMake to the system PATH for all users"
+    echo 装完后【关闭】CMD窗口，重新运行脚本。
     echo.
     pause
     exit /b 1
