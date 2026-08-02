@@ -58,15 +58,15 @@ sudo bash deploy_linux.sh
 
 脚本会自动完成的工作：脚本会**自动安装 ffmpeg、libsndfile、cmake 等系统环境依赖**，并对接国内清华镜像源安装 Miniconda 和 Python 3.9 环境，用户**只需要提前搞定显卡驱动**即可，**无需手动配置其他复杂环境**。
 
-### Windows用户请特别注意
-项目依赖中的 onnxsim 在安装时需要通过源码编译，强制依赖系统级构建工具。
-
----
-请前往 CMake 官网 下载并安装 Windows 版本的 CMake（下载 .msi 安装包）。
-
-在安装向导中，务必勾选 Add CMake to the system PATH for all users（将 CMake 添加到系统环境变量）。
-
-安装完成后，重启命令行终端（CMD / PowerShell），输入 cmake --version 确认安装成功，最后再执行安装命令。
+> **Windows用户请特别注意：**
+> 
+> 项目依赖中的 onnxsim 在安装时需要通过源码编译，强制依赖系统级构建工具。
+>
+> 请前往 CMake 官网 下载并安装 Windows 版本的 CMake（下载 .msi 安装包）。
+> 
+> 在安装向导中，务必勾选 Add CMake to the system PATH for all users（将 CMake 添加到系统环境变量）。
+> 
+> 安装完成后，重启命令行终端（CMD / PowerShell），输入 cmake --version 确认安装成功，最后再执行安装命令。
 
 > **AMD 显卡用户请注意：**
 > 1. **Linux 用户**：AMD 显卡使用了 AMD ROCm 版本的 PyTorch 进行加速，目前只有 RX 5000、6000、7000 系列以及最新的 9000 系列才能正常使用 ROCm 的 GPU 加速，请确认你的显卡型号和驱动。
