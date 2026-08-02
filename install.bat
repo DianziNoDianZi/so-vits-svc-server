@@ -23,27 +23,56 @@ if not exist "venv\Scripts\python.exe" (
     )
 )
 set "VPY=venv\Scripts\python.exe"
-%VPY% -m pip install -q --upgrade pip setuptools wheel
 
-echo [2/4] Choose torch build:
-echo   1 = CPU (smaller, inference only, slow training)
-echo   2 = CUDA GPU (needed for real training, ~2.5GB download)
-set /p TORCH_CHOICE="Choice [1/2]: "
-if "%TORCH_CHOICE%"=="2" (
-    echo Installing CUDA torch (cu121)...
-    %VPY% -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
-) else (
-    echo Installing CPU torch...
-    %VPY% -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-)
+:: Configure domestic mirror for China users
+echo Configuring pip mirror (Tsinghua)...
+"%VPY%" -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 if errorlevel 1 (
-    echo [ERROR] torch install failed. Check network and try again.
+    echo [WARNING] Failed to set pip mirror, using default.
+)
+
+echo Upgrading pip/setuptools/wheel...
+"%VPY%" -m pip install --upgrade pip setuptools wheel
+if errorlevel 1 (
+    echo [ERROR] pip upgrade failed. Check network.
     pause
     exit /b 1
 )
 
+echo [2/4] Choose torch build:
+echo   1 = CPU (smaller, inference only, slow training)
+echo   2 = CUDA GPU (needed for real training, ~2.5GB download)
+:torch_choice
+set "TORCH_CHOICE="
+set /p TORCH_CHOICE="Choice [1/2]: "
+if "%TORCH_CHOICE%"=="1" goto torch_cpu
+if "%TORCH_CHOICE%"=="2" goto torch_cuda
+echo Invalid choice, please enter 1 or 2.
+goto torch_choice
+
+:torch_cpu
+echo Installing CPU torch...
+"%VPY%" -m pip install torch torchaudio
+if errorlevel 1 (
+    echo [ERROR] torch install failed.
+    pause
+    exit /b 1
+)
+goto install_reqs
+
+:torch_cuda
+echo Installing CUDA torch (cu121)...
+"%VPY%" -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+if errorlevel 1 (
+    echo [ERROR] torch install failed.
+    pause
+    exit /b 1
+)
+goto install_reqs
+
+:install_reqs
 echo [3/4] Installing requirements...
-%VPY% -m pip install -r requirements.txt
+"%VPY%" -m pip install -r requirements.txt
 if errorlevel 1 (
     echo [ERROR] requirements install failed.
     pause
