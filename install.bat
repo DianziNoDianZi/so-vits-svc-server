@@ -75,15 +75,16 @@ if errorlevel 1 (
 goto install_reqs
 
 :torch_amd
-echo [提示] 安装 AMD ROCm 版本 PyTorch...
-echo 请确保电脑已安装 AMD 官方显卡驱动，并且拥有 RDNA 2.0 以上架构的显卡（如 RX 5000/6000/7000系列）。
-"%VPY%" -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm
-if errorlevel 1 (
-    echo [ERROR] AMD torch install failed.
-    pause
-    exit /b 1
-)
-goto install_reqs
+echo.
+echo [WARNING] 官方 PyTorch 暂不支持在 Windows 原生环境安装 AMD ROCm 版本！
+echo.
+echo 给你的建议：
+echo 1. 如果你只是想跑推理，请在启动脚本后【选择 1 (CPU 版)】。
+echo 2. 如果你需要用 AMD 显卡进行训练，请使用微软 WSL2 安装 Linux 子系统，并在 Linux 系统内运行本脚本。
+echo.
+echo 自动为您切换回 CPU 安装...
+timeout /t 3 /nobreak >nul
+goto torch_cpu
 
 :install_reqs
 echo [3/4] Installing requirements...
