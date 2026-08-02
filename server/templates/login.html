@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-md-4">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h3 class="card-title text-center mb-4">登录</h3>
+                <form method="POST">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label">用户名</label>
+                        <input type="text" name="username" class="form-control bg-dark text-light border-secondary" value="admin" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">密码</label>
+                        <input type="password" name="password" class="form-control bg-dark text-light border-secondary" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">登录</button>
+                </form>
+                <p class="text-center text-secondary mt-3 mb-0">
+                    <small>首次启动会自动创建管理员账号<br>密码在启动控制台查看</small>
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

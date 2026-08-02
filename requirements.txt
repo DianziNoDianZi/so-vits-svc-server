@@ -1,0 +1,34 @@
+# ===== 推理 + 训练核心 =====
+torch
+torchaudio
+librosa==0.10.1
+numpy
+scipy
+matplotlib
+SoundFile
+pyworld
+praat-parselmouth
+torchcrepe
+faiss-cpu
+scikit-learn
+fairseq==0.12.2
+transformers
+pyyaml
+loguru
+tqdm
+rich
+tensorboard
+tensorboardX
+einops
+local_attention
+onnx
+onnxsim
+onnxoptimizer
+
+# ===== Flask 服务 =====
+Flask
+Flask_Cors
+flask-login
+flask-sqlalchemy
+waitress
+psutil

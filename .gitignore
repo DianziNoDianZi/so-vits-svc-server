@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# 预训练模型（部署时下载或手动上传）
+pretrain/*.pt
+pretrain/*.pth
+pretrain/nsf_hifigan/model
+
+# 运行时产物
+server/data.db
+server/data.db-shm
+server/data.db-wal
+server/secret_key.txt
+server/err.log
+server/out.log
+server/server2.err.log
+server/server2.out.log
+server/uploads/
+configs/
+filelists/
+dataset/
+logs/

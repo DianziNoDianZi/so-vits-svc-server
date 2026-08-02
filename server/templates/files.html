@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>文件管理</h2>
+<p class="text-secondary">服务器上的模型、配置、推理结果与数据集，可自由下载。删除时被模型/任务引用的文件会被拒绝。</p>
+
+{% for sec in sections %}
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="card-title">{{ sec.title }} ({{ sec['items']|length }})</h5>
+        {% if sec['items'] %}
+        <div class="table-responsive">
+            <table class="table table-dark table-sm">
+                <thead>
+                    <tr>
+                        <th>文件名</th>
+                        <th style="width:110px">大小</th>
+                        <th style="width:130px">修改时间</th>
+                        <th style="width:150px">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for it in sec['items'] %}
+                    <tr>
+                        <td><code>{{ it.name }}</code></td>
+                        <td>{{ it.size }}</td>
+                        <td><small>{{ it.modified }}</small></td>
+                        <td>
+                            <a href="{{ url_for('file_download', sub=sec.key, name=it.name) }}" class="btn btn-sm btn-success">下载</a>
+                            <form method="POST" action="{{ url_for('file_delete') }}" style="display:inline">
+                                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="sub" value="{{ sec.key }}">
+                                <input type="hidden" name="name" value="{{ it.name }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('删除 {{ it.name }}？被模型/任务引用的文件会被拒绝')">删除</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-secondary">空</p>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+{% endblock %}

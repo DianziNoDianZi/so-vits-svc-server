@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>仪表盘</h2>
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h5 class="card-title">模型 ({{ models|length }})</h5>
+                {% if models %}
+                <ul class="list-group list-group-flush bg-dark mt-3">
+                    {% for m in models %}
+                    <li class="list-group-item bg-dark text-light border-secondary d-flex justify-content-between">
+                        <span>{{ m.name }}</span>
+                        <small class="text-secondary">{{ m.created_at.strftime('%Y-%m-%d') }}</small>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-secondary mt-3">还没有上传模型</p>
+                {% endif %}
+                <a href="{{ url_for('model_upload') }}" class="btn btn-primary mt-3">上传模型</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h5 class="card-title">推理配置 ({{ configs|length }})</h5>
+                {% if configs %}
+                <ul class="list-group list-group-flush bg-dark mt-3">
+                    {% for c in configs %}
+                    <li class="list-group-item bg-dark text-light border-secondary d-flex justify-content-between">
+                        <span>{{ c.name }}</span>
+                        <small class="text-secondary">{{ c.model.name }}</small>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-secondary mt-3">还没有创建配置</p>
+                {% endif %}
+                <a href="{{ url_for('config_create') }}" class="btn btn-primary mt-3">创建配置</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

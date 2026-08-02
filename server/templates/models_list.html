@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2>模型管理</h2>
+    <a href="{{ url_for('model_upload') }}" class="btn btn-primary">上传模型</a>
+</div>
+
+{% if models %}
+<div class="table-responsive mt-3">
+    <table class="table table-dark table-striped">
+        <thead>
+            <tr>
+                <th>名称</th>
+                <th>模型文件</th>
+                <th>配置文件</th>
+                <th>扩散模型</th>
+                <th>聚类</th>
+                <th>上传时间</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in models %}
+            <tr>
+                <td>{{ m.name }}</td>
+                <td><small>{{ m.model_path[:30] }}...</small></td>
+                <td><small>{{ m.config_path[:30] }}...</small></td>
+                <td>{{ '✅' if m.diff_model_path else '—' }}</td>
+                <td>{{ '✅' if m.cluster_path else '—' }}</td>
+                <td><small>{{ m.created_at.strftime('%m-%d %H:%M') }}</small></td>
+                <td>
+                    <a href="{{ url_for('model_edit', model_id=m.id) }}" class="btn btn-sm btn-outline-secondary">编辑</a>
+                    <form method="POST" action="{{ url_for('model_delete', model_id=m.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('确定删除？')">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body text-center py-5">
+        <p class="text-secondary mb-3">还没有上传任何模型</p>
+        <a href="{{ url_for('model_upload') }}" class="btn btn-primary">上传第一个模型</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

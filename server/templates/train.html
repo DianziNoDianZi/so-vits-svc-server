@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row">
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h4 class="card-title text-light">训练状态</h4>
+                <table class="table table-dark table-sm">
+                    <tr><td>运行中任务</td><td>{{ running }}</td></tr>
+                    <tr><td>队列中</td><td>{{ queued }}</td></tr>
+                    <tr><td>已完成</td><td>{{ done_count }}</td></tr>
+                </table>
+                {% if alive %}
+                <div class="d-flex gap-2">
+                    <form action="{{ url_for('train_stop') }}" method="POST">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-danger btn-sm">停止训练</button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% if active %}
+        <div class="card bg-dark border-secondary mt-3">
+            <div class="card-body">
+                <h5 class="text-light">当前训练: {{ active.speaker }}</h5>
+                <p class="text-secondary">{{ active.progress_msg }}</p>
+
+                <!-- 流程指示器 -->
+                <div class="d-flex flex-wrap gap-1 mb-2">
+                {% for key, label in stages %}
+                    {% if loop.index0 < stage_index %}
+                    <span class="badge bg-success">{{ label }} ✓</span>
+                    {% elif loop.index0 == stage_index %}
+                    <span class="badge bg-primary">{{ label }} ←</span>
+                    {% else %}
+                    <span class="badge bg-secondary">{{ label }}</span>
+                    {% endif %}
+                {% endfor %}
+                </div>
+
+                {% if current_stage == 'diff_train' %}
+                {% if diff_total_epochs > 0 %}
+                <p class="text-info">扩散 epoch: {{ diff_epoch }} / {{ diff_total_epochs }}</p>
+                {% endif %}
+                {% elif total_steps > 0 %}
+                <p class="text-info">步数: {{ current_step }} / {{ total_steps }}</p>
+                {% endif %}
+                {% if elapsed or eta %}
+                <p class="text-secondary">已用: {{ elapsed }} | 预计剩余: {{ eta }}</p>
+                {% endif %}
+                {% if eval_mel is not none %}
+                <p class="text-warning">验证 mel: {{ eval_mel }}（step {{ eval_step }}，与训练 mel 对比可判断过拟合）</p>
+                {% endif %}
+                <div class="progress mb-2">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: {{ pct }}%"></div>
+                </div>
+                <small class="text-secondary">{{ pct }}%</small>
+
+                {% if loss_data and loss_data != '[]' %}
+                <div class="mt-2 mb-2">
+                    <canvas id="lossChart" height="120"></canvas>
+                </div>
+                <script>
+                var ld = {{ loss_data|safe }};
+                var ctx = document.getElementById('lossChart').getContext('2d');
+                var labels = ld.map(function(_,i){return i;});
+                var gData = ld.map(function(d){return d.g;});
+                var dData = ld.map(function(d){return d.d;});
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {label:'G Loss', data:gData, borderColor:'#0d6efd', borderWidth:1, pointRadius:0, fill:false},
+                            {label:'D Loss', data:dData, borderColor:'#dc3545', borderWidth:1, pointRadius:0, fill:false}
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        animation: false,
+                        plugins: {legend:{labels:{color:'#adb5bd',font:{size:10}}}},
+                        scales: {
+                            x:{display:false},
+                            y:{ticks:{color:'#6c757d',font:{size:9}}, grid:{color:'#495057'}}
+                        }
+                    }
+                });
+                </script>
+                {% endif %}
+
+                {% if active.log_path %}
+                <pre id="train-log" class="bg-black text-success p-2 rounded" style="max-height:300px;overflow:auto;font-size:12px;">{{ log_content }}</pre>
+                <script>
+                    setTimeout(function(){ location.reload(); }, 10000);
+                </script>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h4 class="card-title text-light">提交训练任务</h4>
+                <p class="text-secondary">上传zip格式的数据集（内为直接可用的音频文件）</p>
+                <form action="{{ url_for('train_submit') }}" method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label">说话人名称</label>
+                        <input type="text" name="speaker" class="form-control bg-dark text-light border-secondary" required placeholder="my_speaker">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">数据集 (zip) <small class="text-secondary">（续训时不用传）</small></label>
+                        <input type="file" name="dataset" class="form-control bg-dark text-light border-secondary" accept=".zip" id="datasetInput">
+                    </div>
+                    {% if history_resumable %}
+                    <div class="mb-3">
+                        <label class="form-label">续训自（可选）</label>
+                        <select name="resume_from" class="form-select bg-dark text-light border-secondary" id="resumeSelect" onchange="toggleResume()">
+                            <option value="0">不续训，全新训练</option>
+                            {% for t in history_resumable %}
+                            <option value="{{ t.id }}" data-step="{{ t.step }}">#{{ t.id }} {{ t.speaker }} ({{ t.model_type }}, checkpoint {{ t.step }}步)</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                    <script>
+                    function toggleResume() {
+                        var sel = document.getElementById('resumeSelect');
+                        var input = document.getElementById('datasetInput');
+                        if (sel && sel.value != '0') {
+                            input.required = false;
+                            input.disabled = true;
+                            input.parentElement.querySelector('small').textContent = '（续训模式，复用原数据集）';
+                            var opt = sel.options[sel.selectedIndex];
+                            var step = opt ? parseInt(opt.getAttribute('data-step') || '0', 10) : 0;
+                            var total = document.querySelector('input[name="total_steps"]');
+                            if (total && step > 0 && total.dataset.manual !== '1') {
+                                total.value = step + 5000;
+                            }
+                        } else if (input) {
+                            input.required = true;
+                            input.disabled = false;
+                            input.parentElement.querySelector('small').textContent = '（续训时不用传）';
+                        }
+                    }
+                    </script>
+                    <div class="mb-3">
+                        <label class="form-label">模型类型</label>
+                        <select name="model_type" class="form-select bg-dark text-light border-secondary">
+                            <option value="sovits">SoVITS 主模型</option>
+                            <option value="sovits_diff">SoVITS + 扩散模型</option>
+                            <option value="diffusion">仅扩散模型</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">基础参数</label>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-4">
+                            <input type="number" name="total_steps" class="form-control bg-dark text-light border-secondary" value="4200" min="1" max="200000" placeholder="训练步数" oninput="this.dataset.manual='1'">
+                            <small class="text-secondary">总步数</small>
+                        </div>
+                        <div class="col-4">
+                            <input type="number" name="batch_size" class="form-control bg-dark text-light border-secondary" value="4" min="1" max="16" placeholder="batch_size">
+                            <small class="text-secondary">batch_size</small>
+                        </div>
+                        <div class="col-4">
+                            <input type="number" name="keep_ckpts" class="form-control bg-dark text-light border-secondary" value="3" min="1" max="20" placeholder="keep_ckpts">
+                            <small class="text-secondary">保留检查点</small>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <a data-bs-toggle="collapse" href="#advParams" role="button" class="text-secondary" style="font-size:13px;">⚙ 高级参数</a>
+                    </div>
+                    <div class="collapse" id="advParams">
+                        <div class="card card-body bg-dark border-secondary p-2 mb-3">
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">编码器</label>
+                                    <select name="speech_encoder" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                        <option value="vec768l12">ContentVec (768dim) [推荐]</option>
+                                        <option value="vec256l9">ContentVec (256dim)</option>
+                                        <option value="hubertsoft">HuBERTSoft</option>
+                                        <option value="whisper-ppg">Whisper-PPG</option>
+                                        <option value="whisper-ppg-large">Whisper-PPG-Large</option>
+                                        <option value="cnhubertlarge">CN-HuBERT-Large</option>
+                                        <option value="dphubert">DP-HuBERT</option>
+                                        <option value="wavlmbase+">WavLM Base+</option>
+                                    </select>
+                                </div>
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">F0 预测器</label>
+                                    <select name="f0_predictor" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                        <option value="dio">dio [CPU最快]</option>
+                                        <option value="pm">pm [推荐]</option>
+                                        <option value="harvest">harvest [最准但慢]</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">学习率 (lr)</label>
+                                    <input type="number" name="learning_rate" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.0001" step="1e-7" min="1e-6" max="1e-2">
+                                </div>
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">segment_size</label>
+                                    <input type="number" name="segment_size" class="form-control form-control-sm bg-dark text-light border-secondary" value="10240" min="2048" max="65536" step="256">
+                                    <small class="text-secondary">调低省内存</small>
+                                </div>
+                            </div>
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">自动停止步数 (0=不限制)</label>
+                                    <input type="number" name="auto_stop" class="form-control form-control-sm bg-dark text-light border-secondary" value="200" min="0" max="5000">
+                                </div>
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">lr_decay</label>
+                                    <input type="number" name="lr_decay" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.999875" step="1e-6">
+                                </div>
+                            </div>
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">log_interval (步)</label>
+                                    <input type="number" name="log_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="200">
+                                </div>
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">eval_interval (步)</label>
+                                    <input type="number" name="eval_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="800">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <a data-bs-toggle="collapse" href="#diffParams" role="button" class="text-secondary" style="font-size:13px;">🎛 扩散参数</a>
+                    </div>
+                    <div class="collapse" id="diffParams">
+                        <div class="card card-body bg-dark border-secondary p-2 mb-3">
+                            <div class="row mb-2">
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">batch_size</label>
+                                    <input type="number" name="diff_batch_size" class="form-control form-control-sm bg-dark text-light border-secondary" value="8" min="1" max="48">
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">epochs</label>
+                                    <input type="number" name="diff_epochs" class="form-control form-control-sm bg-dark text-light border-secondary" value="100000" step="1000">
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">timesteps</label>
+                                    <input type="number" name="diff_timesteps" class="form-control form-control-sm bg-dark text-light border-secondary" value="1000" min="100" max="10000">
+                                </div>
+                            </div>
+                            <div class="row mb-2">
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">k_step_max</label>
+                                    <input type="number" name="diff_kstep" class="form-control form-control-sm bg-dark text-light border-secondary" value="0" min="0" max="10000">
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">n_layers</label>
+                                    <input type="number" name="diff_layers" class="form-control form-control-sm bg-dark text-light border-secondary" value="20" min="4" max="40">
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">n_chans</label>
+                                    <input type="number" name="diff_chans" class="form-control form-control-sm bg-dark text-light border-secondary" value="256" min="64" max="1024">
+                                </div>
+                            </div>
+                            <div class="row mb-2">
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">n_hidden</label>
+                                    <input type="number" name="diff_hidden" class="form-control form-control-sm bg-dark text-light border-secondary" value="128" min="32" max="512">
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">lr</label>
+                                    <input type="number" name="diff_lr" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.0001" step="1e-7">
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">amp_dtype</label>
+                                    <select name="diff_amp" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                        <option value="fp32">fp32</option>
+                                        <option value="fp16">fp16</option>
+                                        <option value="bf16">bf16</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row mb-2">
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">decay_step</label>
+                                    <input type="number" name="diff_decay_step" class="form-control form-control-sm bg-dark text-light border-secondary" value="100000">
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">gamma</label>
+                                    <input type="number" name="diff_gamma" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.5" step="0.1">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="submit" id="train-submit-btn" class="btn btn-warning w-100" {{ 'disabled' if alive else '' }}>按住 3 秒确认提交</button>
+                    <div id="train-submit-progress" class="progress mt-1" style="height:4px;display:none;">
+                        <div id="train-submit-bar" class="progress-bar bg-warning" style="width:0%"></div>
+                    </div>
+                    {% if alive %}<small class="text-danger">训练进行中，请等待完成后再提交新任务</small>{% endif %}
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+var btn = document.getElementById('train-submit-btn');
+if (btn && !btn.disabled) {
+    var holdTimer = null;
+    var holdInterval = null;
+    var holdPct = 0;
+    var bar = document.getElementById('train-submit-bar');
+    var prog = document.getElementById('train-submit-progress');
+
+    btn.addEventListener('mousedown', function(e) {
+        if (btn.disabled) return;
+        prog.style.display = 'block';
+        holdPct = 0;
+        bar.style.width = '0%';
+        btn.textContent = '松开取消';
+        holdTimer = setTimeout(function() {
+            btn.textContent = '确认提交';
+            bar.style.width = '100%';
+            btn.form.submit();
+        }, 3000);
+        holdInterval = setInterval(function() {
+            holdPct += 100/30;
+            bar.style.width = Math.min(holdPct, 100) + '%';
+        }, 100);
+    });
+
+    var cancel = function() {
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        if (holdInterval) { clearInterval(holdInterval); holdInterval = null; }
+        prog.style.display = 'none';
+        bar.style.width = '0%';
+        btn.textContent = '按住 3 秒确认提交';
+    };
+
+    btn.addEventListener('mouseup', cancel);
+    btn.addEventListener('mouseleave', cancel);
+    btn.addEventListener('touchstart', function(e) {
+        if (btn.disabled) return;
+        prog.style.display = 'block';
+        holdPct = 0;
+        bar.style.width = '0%';
+        btn.textContent = '松开取消';
+        holdTimer = setTimeout(function() {
+            btn.textContent = '确认提交';
+            bar.style.width = '100%';
+            btn.form.submit();
+        }, 3000);
+        holdInterval = setInterval(function() {
+            holdPct += 100/30;
+            bar.style.width = Math.min(holdPct, 100) + '%';
+        }, 100);
+    });
+    btn.addEventListener('touchend', cancel);
+    btn.addEventListener('touchcancel', cancel);
+}
+</script>
+
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="text-light">历史任务</h5>
+        <table class="table table-dark table-sm">
+            <thead><tr><th>#</th><th>说话人</th><th>类型</th><th>状态</th><th>模型</th><th>时间</th></tr></thead>
+            <tbody>
+                {% for t in history %}
+                <tr>
+                    <td>{{ t.id }}</td>
+                    <td>{{ t.speaker }}</td>
+                    <td>{{ t.model_type }}</td>
+                    <td>{{ t.status }}</td>
+                    <td>
+                        {% if t.model_path %}
+                        <a href="{{ url_for('train_result', tid=t.id) }}" class="text-success">模型</a>
+                        <a href="{{ url_for('train_result', tid=t.id, config=1) }}" class="text-secondary">配置</a>
+                        {% endif %}
+                        {% if t.diff_model_path %}
+                        <a href="{{ url_for('train_result', tid=t.id, diff=1) }}" class="text-info">扩散模型</a>
+                        <a href="{{ url_for('train_result', tid=t.id, diff=1, config=1) }}" class="text-secondary">扩散配置</a>
+                        {% endif %}
+                    </td>
+                    <td>{{ t.created_at.strftime('%m-%d %H:%M') }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-secondary">暂无历史任务</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>编辑模型</h2>
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <form method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+                <label class="form-label">名称</label>
+                <input type="text" name="name" class="form-control bg-dark text-light border-secondary" value="{{ model.name }}" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">更新扩散模型 <small class="text-secondary">（留空则保持原样）</small></label>
+                <select name="diff_model_select" class="form-select bg-dark text-light border-secondary mb-2">
+                    <option value="">— 保持现状{{ '（当前: ' + model.diff_model_path + '）' if model.diff_model_path else '（无）' }}—</option>
+                    <option value="__clear__">清除扩散模型</option>
+                    {% for f in diff_files %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+                </select>
+                <small class="text-secondary">从服务器已有文件选择，或上传新文件</small>
+                <input type="file" name="diff_file" class="form-control bg-dark text-light border-secondary" accept=".pth,.pt">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">更新扩散配置 (.yaml) <small class="text-secondary">（扩散模型必配）</small></label>
+                <select name="diff_config_select" class="form-select bg-dark text-light border-secondary mb-2">
+                    <option value="">— 保持现状{{ '（当前: ' + model.diff_config_path + '）' if model.diff_config_path else '（无）' }}—</option>
+                    <option value="__clear__">清除扩散配置</option>
+                    {% for f in diff_configs %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+                </select>
+                <small class="text-secondary">从服务器已有配置选择，或上传新配置</small>
+                <input type="file" name="diff_config_file" class="form-control bg-dark text-light border-secondary" accept=".yaml,.yml">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">更新聚类模型 <small class="text-secondary">（留空则保持原样）</small></label>
+                <select name="cluster_select" class="form-select bg-dark text-light border-secondary mb-2">
+                    <option value="">— 保持现状{{ '（当前: ' + model.cluster_path + '）' if model.cluster_path else '（无）' }}—</option>
+                    <option value="__clear__">清除聚类模型</option>
+                    {% for f in cluster_files %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+                </select>
+                <small class="text-secondary">从服务器已有文件选择，或上传新文件</small>
+                <input type="file" name="cluster_file" class="form-control bg-dark text-light border-secondary" accept=".pth,.pt">
+            </div>
+            <button type="submit" class="btn btn-primary">保存</button>
+            <a href="{{ url_for('model_list') }}" class="btn btn-secondary">返回</a>
+        </form>
+    </div>
+</div>
+{% endblock %}

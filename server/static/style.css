@@ -1,0 +1,122 @@
+/* So-VITS-SVC Inference Service - Dark Theme */
+
+body {
+    background-color: #0d1117;
+    color: #c9d1d9;
+}
+
+a {
+    color: #58a6ff;
+}
+
+a:hover {
+    color: #79c0ff;
+}
+
+.navbar {
+    background-color: #161b22 !important;
+}
+
+.card {
+    background-color: #161b22 !important;
+    border-color: #30363d !important;
+}
+
+.table {
+    color: #c9d1d9;
+}
+
+.table-striped > tbody > tr:nth-of-type(odd) > * {
+    color: #c9d1d9;
+}
+
+.form-control, .form-select {
+    background-color: #0d1117 !important;
+    color: #c9d1d9 !important;
+    border-color: #30363d !important;
+}
+
+.form-control:focus, .form-select:focus {
+    background-color: #0d1117 !important;
+    color: #c9d1d9 !important;
+    border-color: #58a6ff !important;
+    box-shadow: 0 0 0 0.2rem rgba(88, 166, 255, 0.25);
+}
+
+.btn-primary {
+    background-color: #238636;
+    border-color: #2ea043;
+}
+
+.btn-primary:hover {
+    background-color: #2ea043;
+    border-color: #3fb950;
+}
+
+.btn-outline-secondary {
+    color: #8b949e;
+    border-color: #30363d;
+}
+
+.btn-outline-secondary:hover {
+    background-color: #30363d;
+    color: #c9d1d9;
+}
+
+.btn-outline-danger {
+    color: #f85149;
+    border-color: #f85149;
+}
+
+.btn-outline-danger:hover {
+    background-color: #f85149;
+    color: #ffffff;
+}
+
+.list-group-item {
+    background-color: #161b22 !important;
+    color: #c9d1d9 !important;
+    border-color: #30363d !important;
+}
+
+.modal-content {
+    background-color: #161b22;
+    color: #c9d1d9;
+}
+
+.alert-success {
+    background-color: #0d532c;
+    border-color: #2ea043;
+    color: #c9d1d9;
+}
+
+.alert-danger {
+    background-color: #5c1a1a;
+    border-color: #f85149;
+    color: #c9d1d9;
+}
+
+.text-warning {
+    color: #d29922 !important;
+}
+
+.form-label, label {
+    color: #c9d1d9;
+}
+
+.card-title {
+    color: #f0f6fc;
+}
+
+p, small, .text-secondary {
+    color: #8b949e !important;
+}
+
+.alert-success {
+    color: #c9d1d9;
+}
+
+.form-check-label {
+    color: #c9d1d9;
+}
+

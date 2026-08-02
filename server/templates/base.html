@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>So-VITS-SVC 推理服务</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="bg-dark text-light">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark border-bottom border-secondary">
+        <div class="container">
+            <a class="navbar-brand" href="/">So-VITS-SVC</a>
+            {% if current_user.is_authenticated %}
+            <div class="navbar-nav ms-auto">
+                <span class="nav-item nav-link text-secondary">{{ current_user.username }}</span>
+                <a class="nav-link" href="{{ url_for('dashboard') }}">首页</a>
+                <a class="nav-link" href="{{ url_for('model_list') }}">模型</a>
+                <a class="nav-link" href="{{ url_for('pretrain_page') }}">预训练</a>
+                <a class="nav-link" href="{{ url_for('config_list') }}">配置</a>
+                <a class="nav-link" href="{{ url_for('inference') }}">推理</a>
+                <a class="nav-link" href="{{ url_for('task_list') }}">任务</a>
+                <a class="nav-link" href="{{ url_for('train_page') }}">训练</a>
+                <a class="nav-link" href="{{ url_for('files_page') }}">文件</a>
+                <a class="nav-link" href="{{ url_for('settings') }}">设置</a>
+                <a class="nav-link" href="{{ url_for('logout') }}">退出</a>
+            </div>
+            {% endif %}
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+            <div class="alert alert-{{ 'danger' if category == 'danger' else 'success' }} alert-dismissible fade show">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2>预训练模型</h2>
+</div>
+
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="card-title">当前状态</h5>
+        <table class="table table-dark table-sm">
+            <thead>
+                <tr>
+                    <th>文件</th>
+                    <th>用途</th>
+                    <th>状态</th>
+                    <th>大小</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for it in items %}
+                <tr>
+                    <td><code>{{ it.rel }}</code></td>
+                    <td><small class="text-secondary">{{ it.desc }}</small></td>
+                    <td>
+                        {% if it.exists %}<span class="text-success">✓ 已存在</span>
+                        {% else %}<span class="text-danger">缺</span>{% endif %}
+                    </td>
+                    <td>{{ it.size or '—' }}</td>
+                    <td>
+                        {% if it.exists %}
+                        <form method="POST" action="{{ url_for('pretrain_delete') }}" style="display:inline">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="key" value="{{ it.key }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('删除 {{ it.rel }}？')">删除</button>
+                        </form>
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="card-title">上传 / 覆盖</h5>
+        <p class="text-secondary small">
+            训练底模 <code>G_0.pth</code> + <code>D_0.pth</code> 上传后，新训练会自动使用（推荐）。
+            已存在的同名文件会被覆盖；单个文件最大 4GB（whisper large 约 3GB 也能传）。
+        </p>
+        <form method="POST" enctype="multipart/form-data" action="{{ url_for('pretrain_upload') }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">生成器底模 G_0.pth <span class="text-danger">*</span></label>
+                    <input type="file" name="g0_file" class="form-control bg-dark text-light border-secondary" accept=".pth,.pt">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">判别器底模 D_0.pth <span class="text-danger">*</span></label>
+                    <input type="file" name="d0_file" class="form-control bg-dark text-light border-secondary" accept=".pth,.pt">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">RMVPE (rmvpe.pt)</label>
+                    <input type="file" name="rmvpe_file" class="form-control bg-dark text-light border-secondary" accept=".pt,.pth">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">ContentVec (checkpoint_best_legacy_500.pt)</label>
+                    <input type="file" name="contentvec_file" class="form-control bg-dark text-light border-secondary" accept=".pt,.pth">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">NSF-HiFiGAN 声码器（文件名为 model）</label>
+                    <input type="file" name="nsf_model_file" class="form-control bg-dark text-light border-secondary">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">NSF-HiFiGAN 配置 (config.json)</label>
+                    <input type="file" name="nsf_config_file" class="form-control bg-dark text-light border-secondary" accept=".json">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">HuBERTSoft (hubert-soft-0d54a1f4.pt)</label>
+                    <input type="file" name="hubertsoft_file" class="form-control bg-dark text-light border-secondary" accept=".pt,.pth">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">Whisper-PPG (medium.pt)</label>
+                    <input type="file" name="whisper_file" class="form-control bg-dark text-light border-secondary" accept=".pt,.pth">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">Whisper-PPG-Large (large-v2.pt)</label>
+                    <input type="file" name="whisper_large_file" class="form-control bg-dark text-light border-secondary" accept=".pt,.pth">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">CN-HuBERT-Large (chinese-hubert-large-fairseq-ckpt.pt)</label>
+                    <input type="file" name="cnhubert_file" class="form-control bg-dark text-light border-secondary" accept=".pt,.pth">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">DP-HuBERT (DPHuBERT-sp0.75.pth)</label>
+                    <input type="file" name="dphubert_file" class="form-control bg-dark text-light border-secondary" accept=".pth,.pt">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">WavLM Base+ (WavLM-Base+.pt)</label>
+                    <input type="file" name="wavlm_file" class="form-control bg-dark text-light border-secondary" accept=".pt,.pth">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">上传</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

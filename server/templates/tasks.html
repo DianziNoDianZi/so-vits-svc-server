@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+.progress-dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px;
+}
+.dot-pending { background: #484f58; }
+.dot-running { background: #d29922; animation: pulse 1.5s infinite; }
+.dot-done { background: #3fb950; }
+.dot-failed { background: #f85149; }
+.dot-stopped { background: #58a6ff; }
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.4; }
+    100% { opacity: 1; }
+}
+.progress-steps {
+    display: flex; gap: 2px; align-items: center; margin: 4px 0;
+}
+.progress-step {
+    flex: 1; height: 4px; border-radius: 2px; background: #21262d;
+}
+.progress-step.active { background: #d29922; }
+.progress-step.done { background: #3fb950; }
+.progress-step.failed { background: #f85149; }
+</style>
+
+<div class="d-flex justify-content-between align-items-center">
+    <h2>任务列表</h2>
+    <a href="{{ url_for('inference') }}" class="btn btn-primary">新建推理任务</a>
+</div>
+
+{% if tasks or train_tasks %}
+<div class="mt-3">
+    {% if tasks %}
+    <h5 class="text-light mb-2">🎤 推理任务</h5>
+    {% for t in tasks %}
+    {% set cfg = t.config %}
+    <div class="card bg-dark border-secondary mb-2">
+        <div class="card-body py-2 px-3">
+            <div class="row align-items-center">
+                <div class="col">
+                    <div class="d-flex align-items-center">
+                        <span class="progress-dot dot-{{ t.status }}"></span>
+                        <strong>#{{ t.id }}</strong>
+                        <span class="text-secondary ms-2">{{ cfg.name if cfg else '—' }}</span>
+                        <small class="text-secondary ms-3">{{ t.created_at.strftime('%m-%d %H:%M') }}</small>
+                    </div>
+                    {% if t.status == 'pending' %}
+                    <div class="progress-steps mt-2">
+                        <div class="progress-step"></div>
+                        <div class="progress-step"></div>
+                        <div class="progress-step"></div>
+                    </div>
+                    <small class="text-secondary">排队中，等待处理...</small>
+                    {% elif t.status == 'running' %}
+                    {% set pct = t.progress_msg.split('(')[1].split('%')[0] if '(' in t.progress_msg else '?' %}
+                    <div class="mt-2" id="task-{{ t.id }}" data-task-id="{{ t.id }}">
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span class="text-warning" id="tmsg-{{ t.id }}">{{ t.progress_msg }}</span>
+                            <span class="text-secondary" id="tpct-{{ t.id }}">{{ pct }}%</span>
+                        </div>
+                        <div style="height:6px;background:#21262d;border-radius:3px;overflow:hidden">
+                            <div id="tbar-{{ t.id }}" style="height:100%;width:{{ pct if pct != '?' else 0 }}%;background:linear-gradient(90deg,#d29922,#e3b341);border-radius:3px;transition:width 0.5s"></div>
+                        </div>
+                    </div>
+                    {% elif t.status == 'done' %}
+                    <div class="progress-steps mt-2">
+                        <div class="progress-step done"></div>
+                        <div class="progress-step done"></div>
+                        <div class="progress-step done"></div>
+                    </div>
+                    <small class="text-success">✅ 推理完成</small>
+                    {% elif t.status == 'failed' %}
+                    <div class="progress-steps mt-2">
+                        <div class="progress-step done"></div>
+                        <div class="progress-step done"></div>
+                        <div class="progress-step failed"></div>
+                    </div>
+                    <small class="text-danger">❌ {{ t.error_msg[:60] if t.error_msg else '失败' }}</small>
+                    {% endif %}
+                </div>
+                <div class="col-auto">
+                    {% if t.status == 'done' and t.result_filename %}
+                    <a href="{{ url_for('task_result', task_id=t.id) }}" class="btn btn-success btn-sm">⬇ 下载</a>
+                    {% endif %}
+                    <form method="POST" action="{{ url_for('task_delete', task_id=t.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('删除？')">删除</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% if train_tasks %}
+    <h5 class="text-light mt-4 mb-2">🎓 训练任务</h5>
+    {% for t in train_tasks %}
+    <div class="card bg-dark border-secondary mb-2">
+        <div class="card-body py-2 px-3">
+            <div class="row align-items-center">
+                <div class="col">
+                    <div class="d-flex align-items-center">
+                        <span class="progress-dot dot-{{ t.status }}"></span>
+                        <strong>#{{ t.id }}</strong>
+                        <span class="text-info ms-2">{{ t.speaker }}</span>
+                        <span class="text-secondary ms-2">{{ 'SoVITS+扩散' if t.model_type == 'sovits_diff' else ('扩散' if t.model_type == 'diffusion' else 'SoVITS') }}</span>
+                        <small class="text-secondary ms-3">{{ t.created_at.strftime('%m-%d %H:%M') }}</small>
+                        {% if t.resume_from_id %}<small class="text-warning ms-2">续训自 #{{ t.resume_from_id }}</small>{% endif %}
+                    </div>
+                    {% if t.status == 'pending' %}
+                    <small class="text-secondary">排队中...</small>
+                    {% elif t.status == 'running' %}
+                    <small class="text-warning" id="trmsg-{{ t.id }}" data-train-id="{{ t.id }}">{{ t.progress_msg }}</small>
+                    {% elif t.status == 'stopped' %}
+                    <small class="text-warning">⏹ 已停止（checkpoint 已保存，可下载/测试）</small>
+                    {% elif t.status == 'done' %}
+                    <small class="text-success">✅ 训练完成</small>
+                    {% elif t.status == 'failed' %}
+                    <small class="text-danger">❌ {{ t.error_msg[:60] if t.error_msg else '失败' }}</small>
+                    {% endif %}
+                </div>
+                <div class="col-auto">
+                    {% if t.model_path %}
+                    <a href="{{ url_for('train_result', tid=t.id) }}" class="btn btn-success btn-sm">模型</a>
+                    <a href="{{ url_for('train_result', tid=t.id, config=1) }}" class="btn btn-outline-secondary btn-sm">配置</a>
+                    {% endif %}
+                    {% if t.diff_model_path %}
+                    <a href="{{ url_for('train_result', tid=t.id, diff=1) }}" class="btn btn-info btn-sm">扩散</a>
+                    {% endif %}
+                    {% if t.status == 'running' %}
+                    <form method="POST" action="{{ url_for('train_stop') }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('停止训练？当前 checkpoint 会保存并注册为模型')">停止</button>
+                    </form>
+                    {% endif %}
+                    {% if t.model_type != 'diffusion' and t.id in resumable_ids %}
+                    <form method="POST" action="{{ url_for('train_diffusion', tid=t.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-info btn-sm" onclick="return confirm('直接用该数据进入扩散训练（跳过主模型）？')">训扩散</button>
+                    </form>
+                    {% endif %}
+                    {% if t.id in resumable_ids %}
+                    <form method="POST" action="{{ url_for('train_resume', tid=t.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('从 checkpoint 续训该任务？')">续训</button>
+                    </form>
+                    {% endif %}
+                    <form method="POST" action="{{ url_for('train_task_delete', tid=t.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('删除？将同时删除训练数据目录')">删除</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+</div>
+
+<script>
+(function() {
+    var runningTasks = document.querySelectorAll('[data-task-id]');
+    var runningTrains = document.querySelectorAll('[data-train-id]');
+    var pending = document.querySelector('.dot-pending');
+    if (!runningTasks.length && !runningTrains.length && !pending) return;
+
+    function setBar(id, pct) {
+        var el = document.getElementById('tbar-' + id);
+        var label = document.getElementById('tpct-' + id);
+        if (el) el.style.width = (pct == null ? 0 : pct) + '%';
+        if (label) label.textContent = (pct == null ? '…' : pct) + '%';
+    }
+
+    var active = runningTasks.length + runningTrains.length + (pending ? 1 : 0);
+    var finished = 0;
+
+    function done() {
+        finished++;
+        if (finished >= active) {
+            setTimeout(function(){ location.reload(); }, 1500);
+        }
+    }
+
+    runningTasks.forEach(function(node) {
+        var id = node.getAttribute('data-task-id');
+        var timer = setInterval(function() {
+            fetch('/api/tasks/' + id + '/status').then(function(r){ return r.json(); }).then(function(d) {
+                var msg = document.getElementById('tmsg-' + id);
+                if (msg) msg.textContent = d.progress_msg || '';
+                setBar(id, d.pct);
+                if (d.status === 'done' || d.status === 'failed') {
+                    clearInterval(timer);
+                    done();
+                }
+            }).catch(function(){});
+        }, 2000);
+    });
+
+    runningTrains.forEach(function(node) {
+        var id = node.getAttribute('data-train-id');
+        var timer = setInterval(function() {
+            fetch('/api/train/' + id + '/status').then(function(r){ return r.json(); }).then(function(d) {
+                var msg = document.getElementById('trmsg-' + id);
+                if (msg) {
+                    var eta = d.eta ? ' | ETA: ' + d.eta : '';
+                    var parts = [d.stage_label || '', d.progress_msg || ''].filter(Boolean);
+                    msg.textContent = parts.join(' ') + eta;
+                }
+                if (d.status === 'done' || d.status === 'failed') {
+                    clearInterval(timer);
+                    done();
+                }
+            }).catch(function(){});
+        }, 2000);
+    });
+
+    if (pending) {
+        setTimeout(done, 3000);
+    }
+})();
+</script>
+{% else %}
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body text-center py-5">
+        <p class="text-secondary mb-3">还没有任务</p>
+        <a href="{{ url_for('inference') }}" class="btn btn-primary">创建推理任务</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
