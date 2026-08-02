@@ -72,9 +72,35 @@ goto install_reqs
 
 :install_reqs
 echo [3/4] Installing requirements...
+
+:: 1. 降级 pip 解决 omegaconf 元数据死锁问题
+echo   - Step 1: 降级 pip 至 24.1 版本...
+"%VPY%" -m pip install pip==24.1
+
+:: 2. 提前安装一个合法的 omegaconf，避免依赖冲突
+echo   - Step 2: 预装 omegaconf 2.0.6...
+"%VPY%" -m pip install omegaconf==2.0.6
+
+:: 3. 预装 Python 版 cmake
+echo   - Step 3: 预装 Python cmake...
+"%VPY%" -m pip install cmake
+
+:: 4. 正式安装项目依赖（此时不会再有冲突）
+echo   - Step 4: 安装项目全部依赖...
 "%VPY%" -m pip install -r requirements.txt
 if errorlevel 1 (
+    echo.
     echo [ERROR] requirements install failed.
+    echo.
+    echo 【特别提示：如果你是 Windows 系统】：
+    echo 如果上方报错是 "Could not find 'cmake' executable!"，
+    echo 说明 pip 安装的 cmake 没有生效，你还需要手动安装【系统 CMake】。
+    echo.
+    echo 解决方法：
+    echo 1. 访问 https://cmake.org/download/ 下载 Windows 版 CMake (.msi)
+    echo 2. 安装时【务必勾选】 "Add CMake to the system PATH for all users"
+    echo 3. 安装完毕后，关掉这个 CMD 窗口，重新运行本脚本即可。
+    echo.
     pause
     exit /b 1
 )
