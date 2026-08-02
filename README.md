@@ -47,6 +47,17 @@ bash deploy_cpu_conda.sh --skip-models   # 跳过模型下载，部署后网页�
 bash deploy_ubuntu.sh
 ```
 
+### Windows用户请特别注意
+项目依赖中的 onnxsim 在安装时需要通过源码编译，强制依赖系统级构建工具。
+
+---
+请前往 CMake 官网 下载并安装 Windows 版本的 CMake（下载 .msi 安装包）。
+
+在安装向导中，务必勾选 Add CMake to the system PATH for all users（将 CMake 添加到系统环境变量）。
+
+安装完成后，重启命令行终端（CMD / PowerShell），输入 cmake --version 确认安装成功，最后再执行安装命令。
+
+
 ## 配置
 
 | 项 | 环境变量 | 默认 |
