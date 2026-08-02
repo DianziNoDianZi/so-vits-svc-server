@@ -47,7 +47,7 @@ echo   2 = NVIDIA CUDA GPU (needed for real training, ~2.5GB download)
 echo   3 = AMD ROCm GPU (for Radeon RX 5000/6000/7000 series)
 :torch_choice
 set "TORCH_CHOICE="
-set /p TORCH_CHOICE="Choice [1/2/3]: "
+set /p TORCH_CHOICE="Choice (1/2/3): "
 if "%TORCH_CHOICE%"=="1" goto torch_cpu
 if "%TORCH_CHOICE%"=="2" goto torch_cuda
 if "%TORCH_CHOICE%"=="3" goto torch_amd
@@ -79,11 +79,12 @@ echo.
 echo [WARNING] 官方 PyTorch 暂不支持在 Windows 原生环境安装 AMD ROCm 版本！
 echo.
 echo 给你的建议：
-echo 1. 如果你只是想跑推理，请在启动脚本后【选择 1 (CPU 版)】。
-echo 2. 如果你需要用 AMD 显卡进行训练，请使用微软 WSL2 安装 Linux 子系统，并在 Linux 系统内运行本脚本。
+echo (1) 如果你只是想跑推理，请直接重选 1 (CPU 版)。
+echo (2) 如果你需要用 AMD 显卡进行训练，请使用微软 WSL2 安装 Linux 子系统，并在其中运行 Linux 版脚本。
 echo.
-echo 自动为您切换回 CPU 安装...
-timeout /t 3 /nobreak >nul
+echo 自动为您切换回 CPU 安装，请稍候...
+:: Windows 下使用 ping 实现几秒钟延时，比 timeout 更通用
+ping 127.0.0.1 -n 4 >nul
 goto torch_cpu
 
 :install_reqs
