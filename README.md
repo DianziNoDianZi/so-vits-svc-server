@@ -45,7 +45,15 @@ sudo bash deploy_linux.sh
 # 部署完成后再到网页后台手动上传预训练模型。
 # sudo bash deploy_linux.sh --skip-models
 ```
+#### LinuxGPU 部署提醒：
 
+运行 sudo bash deploy_linux.sh 之前，请确保你的显卡驱动已经安装好。
+
+>NVIDIA 用户：请确保能通过 nvidia-smi 看到显卡信息。
+
+>AMD 用户：请确保已安装 AMD ROCm 驱动，并将当前用户加入 video 和 render 组，运行 rocm-smi 能正常看到显卡信息。
+
+脚本会自动完成的工作：脚本会**自动安装 ffmpeg、libsndfile、cmake 等系统环境依赖**，并对接国内清华镜像源安装 Miniconda 和 Python 3.9 环境，用户**只需要提前搞定显卡驱动**即可，**无需手动配置其他复杂环境**。
 
 ### Windows用户请特别注意
 项目依赖中的 onnxsim 在安装时需要通过源码编译，强制依赖系统级构建工具。
