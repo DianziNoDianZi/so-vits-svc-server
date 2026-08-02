@@ -1,0 +1,38 @@
+Third-Party Notices
+====================
+
+This project is a derivative of so-vits-svc (AGPL-3.0), which itself builds
+on third-party libraries. The following major dependencies are used; each
+remains under its own license. See the respective package documentation for
+the full license texts.
+
+So-VITS-SVC  (AGPL-3.0)                    https://github.com/svc-develop-team/so-vits-svc
+PyTorch / torchaudio  (BSD-3-Clause)        https://pytorch.org
+Flask  (BSD-3-Clause)                       https://flask.palletsprojects.com
+Flask-Login  (MIT)                          https://flask-login.readthedocs.io
+Flask-SQLAlchemy  (BSD-3-Clause)            https://flask-sqlalchemy.palletsprojects.com
+waitress  (ZPL-2.0)                         https://docs.pylonsproject.org/projects/waitress
+numpy  (BSD-3-Clause)                       https://numpy.org
+scipy  (BSD-3-Clause)                       https://scipy.org
+SoundFile  (BSD-3-Clause)                   https://pysoundfile.readthedocs.io
+librosa  (ISC)                              https://librosa.org
+numba  (BSD-2-Clause)                       https://numba.pydata.org
+fairseq  (MIT)                              https://github.com/facebookresearch/fairseq
+transformers  (Apache-2.0)                  https://huggingface.co/docs/transformers
+pyyaml  (MIT)                               https://pyyaml.org
+loguru  (MIT)                               https://github.com/Delgan/loguru
+tqdm  (MPL-2.0)                             https://github.com/tqdm/tqdm
+rich  (MIT)                                 https://github.com/Textualize/rich
+tensorboard / tensorboardX  (Apache-2.0)    https://www.tensorflow.org/tensorboard
+einops  (MIT)                               https://einops.rocks
+scikit-learn  (BSD-3-Clause)                https://scikit-learn.org
+pyworld  (MIT)                              https://github.com/JeremyCCHsu/Python-Wrapper-for-World-Vocoder
+praat-parselmouth  (Apache-2.0)             https://github.com/YannickJadoul/Parselmouth
+torchcrepe  (MIT)                           https://github.com/maxrmorrison/torchcrepe
+faiss-cpu  (MIT)                            https://github.com/facebookresearch/faiss
+onnx  (Apache-2.0)                          https://onnx.ai
+matplotlib  (PSF)                           https://matplotlib.org
+psutil  (BSD-3-Clause)                      https://github.com/giampaolo/psutil
+
+If you believe a dependency is missing from this list, please open an issue
+in the repository.

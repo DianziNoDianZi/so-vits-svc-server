@@ -1,3 +1,6 @@
+"""Modified from upstream so-vits-svc (AGPL-3.0, svc-develop-team).
+See NOTICE. 2026-08.
+"""
 '''
 author: wayn391@mastertones
 '''

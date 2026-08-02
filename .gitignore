@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 *.pyo
+.idea/
 
 # 预训练模型（部署时下载或手动上传）
 pretrain/*.pt

@@ -10,27 +10,27 @@ This project is a derivative work of:
 
 Derivative work license: AGPL-3.0 (see LICENSE).
 
-Significant modifications (upstream-derived files that were modified,
-per AGPL-3.0 section 5):
+Upstream-derived files that were modified (per AGPL-3.0 section 5):
 
-  * server/app.py                  - security hardening, task queue,
-                                     training monitor, file manager, etc.
-  * server/inference_worker.py     - inference subprocess (safe loading,
-                                     progress, timeout)
-  * server/train_worker.py         - training pipeline (base models, resume,
-                                     diffusion, CPU support)
-  * server/config.py               - persistent secret key, upload dirs
-  * server/db_models.py            - schema additions (notify, training task)
-  * server/extensions.py           - SQLite WAL / busy timeout
-  * server/notifier.py             - configurable SMTP
-  * train.py                       - CPU training support, max_steps/auto_stop,
-                                     validation-loss logging
-  * inference/infer_tool.py        - diffusion config existence check fix
-  * deploy_cpu.sh / deploy_cpu_conda.sh / deploy_ubuntu.sh
-  * server/templates/*             - Web UI
+  * train.py                          - CPU training support, max_steps/auto_stop,
+                                        validation-loss logging
+  * train_diff.py                     - config handling adjustments
+  * inference/infer_tool.py           - diffusion config existence check fix
+  * utils.py                          - encoding / compatibility fixes
+  * preprocess_flist_config.py        - encoding fixes
+  * preprocess_hubert_f0.py           - encoding fixes
+  * diffusion/data_loaders.py         - encoding fixes
+  * diffusion/logger/saver.py         - encoding fixes
+  * diffusion/logger/utils.py         - encoding fixes
+  * cluster/train_cluster.py          - encoding fixes
+  * configs_template/config_template.json      - project defaults
+  * configs_template/diffusion_template.yaml   - project defaults
+  * requirements.txt                  - dependency pins/mirror adjustments
+  * .gitignore / .gitattributes / README.md    - project configuration/docs
 
-Files derived from upstream that were not modified remain under the
-upstream copyright. New files are licensed under AGPL-3.0 as well.
+New files (server web app, workers, deploy scripts, templates) are also
+licensed under AGPL-3.0. Files derived from upstream that were not modified
+remain under the upstream copyright.
 
 The complete corresponding source is available at:
   https://github.com/DianziNoDianZi/so-vits-svc-server
