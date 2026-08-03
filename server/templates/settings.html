@@ -117,6 +117,17 @@
                                {{ 'checked' if current_user.email_notify else '' }}>
                         <label class="form-check-label" for="notifyCb">训练完成时发送邮件通知</label>
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label">训练进度报告间隔（步数，0=关闭）</label>
+                        <input type="number" name="report_interval" class="form-control bg-dark text-light border-secondary"
+                               value="{{ current_user.report_interval or 0 }}" min="0" max="100000" step="100">
+                        <small class="text-secondary">每隔这么多步发一封训练进度邮件（需开启上方邮件通知）</small>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" name="infer_notify" value="1" class="form-check-input" id="inferNotifyCb"
+                               {{ 'checked' if current_user.infer_notify else '' }}>
+                        <label class="form-check-label" for="inferNotifyCb">推理完成时发送邮件通知</label>
+                    </div>
                     <button type="submit" class="btn btn-outline-primary w-100 mb-2">保存通知设置</button>
                     <button type="submit" formaction="{{ url_for('test_notify') }}" formmethod="POST" class="btn btn-outline-info w-100">发送测试邮件</button>
                 </form>

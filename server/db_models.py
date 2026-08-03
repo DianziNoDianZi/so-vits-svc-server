@@ -15,6 +15,8 @@ class User(UserMixin, db.Model):
     smtp_pwd = db.Column(db.String(200), nullable=True)
     smtp_host = db.Column(db.String(200), nullable=True)
     smtp_port = db.Column(db.Integer, nullable=True)
+    report_interval = db.Column(db.Integer, default=0)   # 训练进度报告间隔（步数，0=关闭）
+    infer_notify = db.Column(db.Boolean, default=False)  # 推理完成时邮件通知
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     models = db.relationship('Model', backref='owner', lazy='dynamic')

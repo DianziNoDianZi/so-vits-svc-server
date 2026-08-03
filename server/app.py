@@ -56,7 +56,8 @@ def migrate_db():
     ucols = [c['name'] for c in inspector.get_columns('user')]
     user_cols = [('email', 'VARCHAR(200)'), ('email_notify', 'BOOLEAN'),
                  ('smtp_user', 'VARCHAR(200)'), ('smtp_pwd', 'VARCHAR(200)'),
-                 ('smtp_host', 'VARCHAR(200)'), ('smtp_port', 'INTEGER')]
+                 ('smtp_host', 'VARCHAR(200)'), ('smtp_port', 'INTEGER'),
+                 ('report_interval', 'INTEGER'), ('infer_notify', 'BOOLEAN')]
     for col, typ in user_cols:
         if col not in ucols:
             db.session.execute(sa.text(f'ALTER TABLE user ADD COLUMN {col} {typ}'))
@@ -557,6 +558,11 @@ def save_notify():
         current_user.smtp_port = int(request.form.get('smtp_port', 465) or 465)
     except (ValueError, TypeError):
         current_user.smtp_port = 465
+    try:
+        current_user.report_interval = int(request.form.get('report_interval', 0) or 0)
+    except (ValueError, TypeError):
+        current_user.report_interval = 0
+    current_user.infer_notify = request.form.get('infer_notify') == '1'
     db.session.commit()
     flash('通知设置已保存', 'success')
     return redirect(url_for('settings'))
@@ -609,6 +615,11 @@ def settings():
             current_user.smtp_port = int(request.form.get('smtp_port', 465) or 465)
         except (ValueError, TypeError):
             current_user.smtp_port = 465
+        try:
+            current_user.report_interval = int(request.form.get('report_interval', 0) or 0)
+        except (ValueError, TypeError):
+            current_user.report_interval = 0
+        current_user.infer_notify = request.form.get('infer_notify') == '1'
 
         if new_username and new_username != current_user.username:
             existing = User.query.filter_by(username=new_username).first()
@@ -1150,6 +1161,14 @@ def task_worker():
 
                 task.done_at = datetime.utcnow()
 
+                # 推理完成/失败邮件通知
+                try:
+                    if task.user and task.user.infer_notify:
+                        from notifier import notify_inference_complete
+                        notify_inference_complete(task, os.environ.get('SSVC_SERVER_URL', 'http://127.0.0.1:5000'))
+                except Exception:
+                    pass
+
             except Exception as e:
                 traceback.print_exc()
                 task.status = 'failed'
@@ -1519,6 +1538,63 @@ def train_worker_daemon():
                     from train_worker import run as tr
                     extra = json.loads(task.params_json or '{}')
                     root_id = _chain_root_id(task)
+
+                    # 训练墙钟超时（TRAIN_TIMEOUT 秒，0=不限制）：
+                    # 到点由看门狗杀掉训练子进程，worker 会自动保存最新 checkpoint
+                    timeout = int(os.environ.get('TRAIN_TIMEOUT', '0') or 0)
+                    if timeout > 0:
+                        _task_id = task.id
+
+                        def _timeout_watchdog():
+                            time.sleep(timeout)
+                            with app.app_context():
+                                t = db.session.get(TrainingTask, _task_id)
+                                if t and t.status == 'running':
+                                    from train_worker import stop as stop_train
+                                    stop_train()
+                                    t.error_msg = '__TIMEOUT__'
+                                    db.session.commit()
+
+                        threading.Thread(target=_timeout_watchdog, daemon=True).start()
+
+                    # 训练进度邮件报告：每 report_interval 步发一封
+                    _rep_user = task.user
+                    _rep_interval = (_rep_user.report_interval or 0) if _rep_user else 0
+                    if _rep_interval > 0 and _rep_user and _rep_user.email_notify:
+                        _task_id = task.id
+                        _interval = _rep_interval
+
+                        def _progress_reporter():
+                            last = 0
+                            while True:
+                                time.sleep(60)
+                                try:
+                                    with app.app_context():
+                                        t = db.session.get(TrainingTask, _task_id)
+                                        if not t or t.status != 'running':
+                                            break
+                                        info = _parse_training_log(t)
+                                        step = info.get('current_step', 0)
+                                        if step >= _interval and (step // _interval) > (last // _interval):
+                                            last = step
+                                            losses = ''
+                                            ld = info.get('loss_data', [])
+                                            if ld:
+                                                g = ld[-1].get('g')
+                                                d = ld[-1].get('d')
+                                                losses = f'G={g} D={d}'
+                                            from notifier import notify_train_progress
+                                            notify_train_progress(
+                                                t,
+                                                os.environ.get('SSVC_SERVER_URL', 'http://127.0.0.1:5000'),
+                                                step, t.total_steps or 0,
+                                                losses, info.get('stage', ''), info.get('eta', ''),
+                                            )
+                                except Exception:
+                                    pass
+
+                        threading.Thread(target=_progress_reporter, daemon=True).start()
+
                     result = tr(
                         task_id=task.id,
                         speaker=task.speaker,
@@ -1535,9 +1611,14 @@ def train_worker_daemon():
                     # 用户手动停止时（status=stopped），train_stop 已保存 checkpoint 并注册模型，
                     # 这里不能再覆盖任务状态
                     if task.status != 'stopped':
-                        task.status = result.get('status', 'failed')
-                        task.progress_msg = result.get('progress_msg', '')
-                        task.error_msg = result.get('error_msg', '')
+                        if task.error_msg == '__TIMEOUT__':
+                            task.status = 'failed'
+                            task.progress_msg = '训练超时，已自动停止'
+                            task.error_msg = '训练超过设定时间（TRAIN_TIMEOUT），已自动停止并保存 checkpoint'
+                        else:
+                            task.status = result.get('status', 'failed')
+                            task.progress_msg = result.get('progress_msg', '')
+                            task.error_msg = result.get('error_msg', '')
                         if result.get('model_path'):
                             task.model_path = result['model_path']
                         if result.get('config_path'):
