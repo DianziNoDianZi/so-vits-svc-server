@@ -123,9 +123,7 @@ server/
 ├── configs_template/    ← 训练配置模板
 ├── pretrain/            ← 预训练模型（不在 git 中）
 ├── train.py train_diff.py preprocess_*.py
-├── deploy_cpu.sh        ← Linux CPU 一键部署（apt 版）
-├── deploy_cpu_conda.sh  ← Linux CPU 一键部署（conda 版，推荐）
-├── deploy_ubuntu.sh     ← Linux GPU 部署
+├── deploy_linux.sh      ← Linux 一键部署（CUDA / ROCm / CPU 三选一，conda）
 ├── install.bat / start.bat / start.ps1  ← Windows 安装/启动
 └── requirements.txt LICENSE
 ```
