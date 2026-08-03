@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="So-VITS-SVC 服务器：开箱即用的 AI 声音转换 Web 平台，支持推理、训练、续训、监控、一键 CPU/GPU 部署。">
-<title>So-VITS-SVC Server — 开箱即用的 AI 声音转换 Web 平台</title>
+<meta name="description" content="So-VITS-SVC 服务器：浏览器里训练、续训、推理换声的 Web 界面，支持 CPU/GPU 一键部署。">
+<title>So-VITS-SVC Server — 浏览器里训完再换声</title>
 <style>
   :root {
     --bg: #0b1020;
@@ -159,58 +159,58 @@
 
 <header class="hero">
   <div class="wrap">
-    <span class="badge">AGPL-3.0 · 推理 + 训练 · 一键部署</span>
-    <h1>开箱即用的<br><span class="grad">AI 声音转换</span> Web 平台</h1>
-    <p class="sub">在浏览器里完成 so-vits-svc 的全部流程：上传数据集、队列训练、实时监控、
-    随时停止试听、续训、推理换声。纯 CPU 服务器也能跑，支持 NVIDIA / AMD / CPU 一键部署。</p>
+    <span class="badge">AGPL-3.0 · so-vits-svc 派生 · 推理 + 训练</span>
+    <h1>一个浏览器里能训完、<br>能换声的<span class="grad"> So-VITS-SVC 服务器</span></h1>
+    <p class="sub">上传数据集就能排队训练，随时停、随时续，看 Loss 曲线判断训没训坏；
+    训完直接上传音频换声。NVIDIA / AMD / 纯 CPU 都有对应的一键部署脚本。</p>
     <div class="cta">
       <a class="btn primary" href="https://github.com/DianziNoDianZi/so-vits-svc-server" target="_blank" rel="noopener">GitHub 仓库</a>
       <a class="btn ghost" href="https://gitee.com/DianZiNoDianZi/so-vits-svc-inference" target="_blank" rel="noopener">Gitee 镜像</a>
     </div>
     <div class="meta">
-      <span>多用户登录</span><span>·</span><span>任务队列</span><span>·</span>
-      <span>Loss 曲线监控</span><span>·</span><span>邮件通知</span>
+      <span>多用户登录</span><span>·</span><span>训练任务队列</span><span>·</span>
+      <span>实时 Loss 曲线</span><span>·</span><span>邮件通知</span>
     </div>
   </div>
 </header>
 
 <section id="features">
   <div class="wrap">
-    <h2>核心<span class="grad">功能</span></h2>
-    <p class="lead">把 so-vits-svc 从命令行搬进浏览器，普通人也能完成声音克隆的全部流程。</p>
+    <h2>都有<span class="grad">什么</span></h2>
+    <p class="lead">so-vits-svc 本身是命令行工具，这个项目给它套了一层 Web 界面和任务管理。</p>
     <div class="grid">
-      <div class="card"><div class="icon">🎤</div><h3>推理换声</h3><p>上传模型 + 音频即可 SVC 换声，支持浅扩散（k_step）修音，推理任务实时看进度。</p></div>
-      <div class="card"><div class="icon">🏋️</div><h3>训练 + 续训</h3><p>数据集 zip 提交队列训练；主模型、扩散模型都支持从 checkpoint 继续训练。</p></div>
-      <div class="card"><div class="icon">⏹️</div><h3>中途停止测试</h3><p>训练中随时停止，自动保存当前 checkpoint 并注册为模型，立刻推理试听效果。</p></div>
-      <div class="card"><div class="icon">📈</div><h3>训练监控</h3><p>实时日志、Loss 曲线、验证集 loss（判断过拟合）、ETA 预估，一眼看清训练状态。</p></div>
-      <div class="card"><div class="icon">🗑️</div><h3>精确清理</h3><p>按单个任务 / 模型 / 数据集清理垃圾数据，误伤前有检查提示。</p></div>
-      <div class="card"><div class="icon">📁</div><h3>文件管理</h3><p>网页自由下载 / 删除服务器上的模型、配置、推理结果与数据集。</p></div>
-      <div class="card"><div class="icon">🧩</div><h3>预训练页</h3><p>网页上传管理 ContentVec、NSF-HiFiGAN、训练底模 G_0/D_0、RMVPE 等，无需 SSH。</p></div>
-      <div class="card"><div class="icon">📧</div><h3>邮件通知</h3><p>训练完成、按步数进度、推理完成自动邮件报告，SMTP 服务器可自定义。</p></div>
-      <div class="card"><div class="icon">🛡️</div><h3>安全加固</h3><p>CSRF 防护、登录限速、路径穿越防护、持久化会话密钥、上传校验。</p></div>
+      <div class="card"><div class="icon">🎤</div><h3>推理换声</h3><p>上传模型和音频提交任务，支持浅扩散（k_step）修音，进度在页面里实时显示。</p></div>
+      <div class="card"><div class="icon">🏋️</div><h3>训练 + 续训</h3><p>数据集 zip 直接丢进队列。中途断了可以从 checkpoint 继续，主模型和扩散都支持。</p></div>
+      <div class="card"><div class="icon">⏹️</div><h3>随时停止试听</h3><p>训练到一半想听效果，点停止，当前 checkpoint 自动存成模型，直接拿去推理。</p></div>
+      <div class="card"><div class="icon">📈</div><h3>Loss 曲线</h3><p>G/D Loss 实时画成折线，验证集 loss 单独显示，方便判断是不是训过头了。</p></div>
+      <div class="card"><div class="icon">🗑️</div><h3>按任务清理</h3><p>一个任务不要了，只清它自己的数据；可能误伤别的任务时会给提示。</p></div>
+      <div class="card"><div class="icon">📁</div><h3>文件管理</h3><p>模型、配置、推理结果、数据集都能在网页里下载或删除，不用登服务器。</p></div>
+      <div class="card"><div class="icon">🧩</div><h3>预训练页</h3><p>ContentVec、NSF-HiFiGAN、底模 G_0/D_0、RMVPE 都走网页上传，省得 SSH 传文件。</p></div>
+      <div class="card"><div class="icon">📧</div><h3>邮件通知</h3><p>训练完成、每 N 步、推理完成都会发邮件，SMTP 服务器自己在设置页填。</p></div>
+      <div class="card"><div class="icon">🛡️</div><h3>基本的防护</h3><p>CSRF、登录限速、路径穿越检查、上传类型校验，这些都有。</p></div>
     </div>
   </div>
 </section>
 
 <section id="workflow">
   <div class="wrap">
-    <h2>使用<span class="grad">流程</span></h2>
-    <p class="lead">训练与推理两条主线，全部在浏览器里完成。</p>
+    <h2>大概<span class="grad">怎么用</span></h2>
+    <p class="lead">实际跑一圈大概是这样：</p>
     <div class="steps">
-      <div class="step"><h4>上传数据集</h4><p>打包 zip 上传，自动过滤 2 秒以下的短片段</p></div>
-      <div class="step"><h4>队列训练</h4><p>设置总步数、auto_stop、编码器，底模自动加载</p></div>
-      <div class="step"><h4>监控 Loss</h4><p>看 train / 验证 loss 判断是否过拟合</p></div>
-      <div class="step"><h4>随时停止试听</h4><p>满意就停止，checkpoint 自动保存为模型</p></div>
-      <div class="step"><h4>训练扩散</h4><p>主模型训好后一键进入扩散训练</p></div>
-      <div class="step"><h4>上传推理</h4><p>上传音频 → 提交任务 → 下载结果</p></div>
+      <div class="step"><h4>上传数据集</h4><p>zip 打包上传，太短的片段会自动跳过</p></div>
+      <div class="step"><h4>排队训练</h4><p>填总步数等参数，底模自动加载</p></div>
+      <div class="step"><h4>看 Loss 曲线</h4><p>判断还在收敛还是已经过拟合</p></div>
+      <div class="step"><h4>停止试听</h4><p>满意就停，checkpoint 自动变成模型</p></div>
+      <div class="step"><h4>训扩散</h4><p>主模型好了直接进扩散训练</p></div>
+      <div class="step"><h4>上传音频</h4><p>提交推理，拿结果</p></div>
     </div>
   </div>
 </section>
 
 <section id="quickstart">
   <div class="wrap">
-    <h2>快速<span class="grad">开始</span></h2>
-    <p class="lead">Windows 一条命令安装；Linux 一键部署，自动走国内镜像。</p>
+    <h2>怎么<span class="grad">跑起来</span></h2>
+    <p class="lead">Windows 装好后启动就行；Linux 有整合好的部署脚本，国内镜像。</p>
     <div class="tabs">
       <button class="tab-btn active" data-tab="win">Windows</button>
       <button class="tab-btn" data-tab="linux">Linux（GPU / CPU）</button>
@@ -230,14 +230,14 @@ sudo bash deploy_linux.sh
 <span class="cm"># 网络慢可跳过模型下载，部署后在网页"预训练"页补传</span>
 sudo bash deploy_linux.sh --skip-models</pre>
     </div>
-    <p class="table-note">部署脚本会自动安装 ffmpeg / libsndfile / cmake 等系统依赖，并接入清华、阿里云国内镜像安装 Miniconda 与 Python 3.9 环境。</p>
+    <p class="table-note">脚本会装 ffmpeg / libsndfile / cmake 等系统依赖，Miniconda 和 Python 3.9 走清华、阿里云镜像，不用手动配。</p>
   </div>
 </section>
 
 <section id="models">
   <div class="wrap">
-    <h2>预训练<span class="grad">模型</span></h2>
-    <p class="lead">推理必需 ContentVec + NSF-HiFiGAN；训练底模 G_0 / D_0 可选但推荐。</p>
+    <h2>要准备哪些<span class="grad">模型</span></h2>
+    <p class="lead">推理必须有 ContentVec 和 NSF-HiFiGAN；训练的话底模 G_0 / D_0 建议放上。</p>
     <table>
       <tr><th>文件</th><th>大小</th><th>获取方式</th></tr>
       <tr><td><code>checkpoint_best_legacy_500.pt</code></td><td>~180 MB</td><td>部署脚本自动下载，或网页上传</td></tr>
@@ -245,7 +245,7 @@ sudo bash deploy_linux.sh --skip-models</pre>
       <tr><td><code>G_0.pth</code> + <code>D_0.pth</code></td><td>~400 MB</td><td>网页上传（推荐）</td></tr>
       <tr><td><code>rmvpe.pt</code> 等编码器</td><td>可选</td><td>网页"预训练"页上传</td></tr>
     </table>
-    <p class="table-note">大文件建议 scp 直接放入 <code>pretrain/</code> 目录，网页会自动识别。</p>
+    <p class="table-note">文件大的话直接 scp 到 <code>pretrain/</code> 目录，网页会自动识别。</p>
   </div>
 </section>
 
@@ -253,8 +253,8 @@ sudo bash deploy_linux.sh --skip-models</pre>
   <div class="wrap">
     <div class="license">
       <h3>开源协议 AGPL-3.0</h3>
-      <p>本项目是 <a href="https://github.com/svc-develop-team/so-vits-svc" target="_blank" rel="noopener">so-vits-svc</a>（AGPL-3.0）的派生作品，整体以 <b>AGPL-3.0</b> 发布。完整对应源码在本仓库公开，满足网络服务提供源码的要求。</p>
-      <p>使用或二次分发时须保留版权与修改声明，并以相同协议分发。修改文件清单见仓库 NOTICE。</p>
+      <p>这个项目是 <a href="https://github.com/svc-develop-team/so-vits-svc" target="_blank" rel="noopener">so-vits-svc</a>（AGPL-3.0）的派生，整体按 <b>AGPL-3.0</b> 发布，源码都在仓库里。</p>
+      <p>再分发或自己部署时注意保留版权和修改声明、继续用相同协议。改过哪些文件见仓库 NOTICE。</p>
     </div>
   </div>
 </section>
