@@ -353,6 +353,10 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
 
             log(f'保存 SoVITS 模型...')
             model_name = _latest_checkpoint(data_dir, 'G_', '.pth') or ''
+            if model_name == 'G_0.pth':
+                # 只有底模，说明训练在保存任何 checkpoint 之前就崩了
+                model_name = ''
+                log('⚠ 未产生训练 checkpoint（只有底模 G_0.pth）')
             if model_name:
                 shutil.copy2(os.path.join(data_dir, model_name), os.path.join(UPLOAD_BASE, 'models', model_name))
                 cfg_name = model_name.replace('.pth', '.json')
@@ -361,9 +365,9 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 saved_config = f'config_{cfg_name}'
                 log(f'SoVITS 模型已保存: {model_name}')
             else:
-                raise FileNotFoundError('训练完成但未找到 G_*.pth')
+                raise FileNotFoundError('训练未产生有效 checkpoint（G_*.pth）')
             if sovits_error:
-                raise RuntimeError(f'SoVITS 训练失败（已保存最新 checkpoint: {model_name}）')
+                raise RuntimeError('SoVITS 训练失败（未产生有效 checkpoint）')
 
         if need_diff:
             diff_config = os.path.join(PROJECT_DIR, 'configs', 'diffusion.yaml')
