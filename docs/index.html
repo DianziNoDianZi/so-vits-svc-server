@@ -398,7 +398,11 @@ sudo bash deploy_linux.sh --skip-models</pre>
     }
     function checkReady() {
       ready = audios.every(function (a) {
-        return a.readyState >= 3 || (a.buffered.length && a.buffered.end(a.buffered.length - 1) >= a.duration - 0.5);
+        if (a.readyState >= 4) return true;
+        if (a.readyState >= 3 && a.buffered.length && a.duration) {
+          return a.buffered.end(a.buffered.length - 1) >= a.duration - 0.5;
+        }
+        return false;
       });
       if (ready) {
         playBtn.textContent = playing ? '❚❚' : '▶';
