@@ -318,7 +318,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 )
 
             if global_step > 0 and global_step % hps.train.eval_interval == 0:
-                evaluate(hps, net_g, eval_loader, writer_eval)
+                evaluate(hps, net_g, eval_loader, writer_eval, logger)
                 utils.save_checkpoint(net_g, optim_g, hps.train.learning_rate, epoch,
                                       os.path.join(hps.model_dir, "G_{}.pth".format(global_step)))
                 utils.save_checkpoint(net_d, optim_d, hps.train.learning_rate, epoch,
@@ -348,7 +348,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         start_time = now
 
 
-def evaluate(hps, generator, eval_loader, writer_eval):
+def evaluate(hps, generator, eval_loader, writer_eval, logger=None):
     generator.eval()
     image_dict = {}
     audio_dict = {}
@@ -398,7 +398,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
             "gen/mel": utils.plot_spectrogram_to_numpy(y_hat_mel[0].cpu().numpy()),
             "gt/mel": utils.plot_spectrogram_to_numpy(mel[0].cpu().numpy())
         })
-    if eval_count > 0:
+    if eval_count > 0 and logger is not None:
         logger.info(f"Eval Losses: [{eval_mel_sum / eval_count:.4f}], step: {global_step}")
     utils.summarize(
         writer=writer_eval,
