@@ -29,3 +29,6 @@ docs/demo/*.mp3
 docs/demo/*.flac
 docs/demo/*.m4a
 docs/demo/*.ogg
+!docs/demo/original.wav
+!docs/demo/converted.wav
+!docs/demo/accompaniment.wav
