@@ -22,3 +22,10 @@ configs/
 filelists/
 dataset/
 logs/
+
+# 试听音频（由作者本地放置，不入仓库）
+docs/demo/*.wav
+docs/demo/*.mp3
+docs/demo/*.flac
+docs/demo/*.m4a
+docs/demo/*.ogg

@@ -86,10 +86,52 @@
   .card:hover { border-color: #3c5188; transform: translateY(-2px); }
   .card .icon { font-size: 24px; margin-bottom: 12px; }
   .card h3 { font-size: 16px; margin-bottom: 8px; }
-  .card p { font-size: 14px; color: var(--muted); }
+.card p { font-size: 14px; color: var(--muted); }
 
-  /* Workflow */
-  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; counter-reset: step; }
+/* Demo player */
+.demo-panel {
+  background: linear-gradient(180deg, var(--card), rgba(21,31,61,0.6));
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 22px; max-width: 760px; margin: 0 auto;
+}
+.demo-master {
+  display: flex; align-items: center; gap: 14px;
+  padding-bottom: 16px; margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.demo-play {
+  width: 46px; height: 46px; border-radius: 50%; border: none; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent), #6f7bff); color: #fff;
+  font-size: 17px; flex: none; transition: transform 0.12s ease;
+}
+.demo-play:hover { transform: scale(1.05); }
+.demo-master progress {
+  flex: 1; height: 6px; border: none; border-radius: 3px; cursor: pointer;
+  background: #26335c;
+}
+.demo-master progress::-webkit-progress-bar { background: #26335c; border-radius: 3px; }
+.demo-master progress::-webkit-progress-value { background: var(--accent); border-radius: 3px; }
+.demo-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.demo-hint { font-size: 12px; color: var(--muted); margin: 10px 0 0; text-align: center; }
+
+.demo-track {
+  display: flex; align-items: center; gap: 12px; padding: 9px 2px;
+}
+.demo-track + .demo-track { border-top: 1px solid rgba(37,51,95,0.6); }
+.demo-track .name { width: 100px; font-size: 14px; font-weight: 600; flex: none; }
+.demo-track .sub { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 1px; }
+.demo-mute {
+  width: 34px; height: 30px; border-radius: 8px; border: 1px solid var(--border);
+  background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; flex: none;
+}
+.demo-mute:hover { border-color: #3c5188; color: var(--text); }
+.demo-track.muted .demo-mute { border-color: var(--accent); color: var(--accent); }
+.demo-track.muted .name { color: var(--muted); }
+.demo-vol { flex: 1; accent-color: var(--accent); cursor: pointer; }
+.demo-vol-pct { width: 44px; font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; flex: none; }
+
+/* Workflow */
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; counter-reset: step; }
   .step {
     background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
     padding: 20px 18px; position: relative;
@@ -178,20 +220,34 @@
 <section id="demo">
   <div class="wrap">
     <h2>听听<span class="grad">效果</span></h2>
-    <p class="lead">实际训练出来的模型做的推理结果，可以直接试听。（示例音频整理中）</p>
-    <div class="grid">
-      <div class="card">
-        <h3>示例 1</h3>
-        <p>待补充</p>
+    <p class="lead">同一段歌：原唱人声、模型换声后的人声、伴奏。三个轨道同步播放，可以各自调音量对比差别。</p>
+    <div class="demo-panel">
+      <div class="demo-master">
+        <button class="demo-play" id="demoPlay" title="播放 / 暂停">▶</button>
+        <progress id="demoProgress" max="1000" value="0"></progress>
+        <span class="demo-time" id="demoTime">0:00 / 0:00</span>
       </div>
-      <div class="card">
-        <h3>示例 2</h3>
-        <p>待补充</p>
+
+      <div class="demo-track" id="track-original">
+        <span class="name">原唱人声<span class="sub">Original</span></span>
+        <button class="demo-mute" title="静音">M</button>
+        <input type="range" class="demo-vol" min="0" max="100" value="100">
+        <span class="demo-vol-pct">100%</span>
       </div>
-      <div class="card">
-        <h3>示例 3</h3>
-        <p>待补充</p>
+      <div class="demo-track" id="track-converted">
+        <span class="name">换声后人声<span class="sub">Converted</span></span>
+        <button class="demo-mute" title="静音">M</button>
+        <input type="range" class="demo-vol" min="0" max="100" value="100">
+        <span class="demo-vol-pct">100%</span>
       </div>
+      <div class="demo-track" id="track-accompaniment">
+        <span class="name">伴奏<span class="sub">Accompaniment</span></span>
+        <button class="demo-mute" title="静音">M</button>
+        <input type="range" class="demo-vol" min="0" max="100" value="100">
+        <span class="demo-vol-pct">100%</span>
+      </div>
+
+      <p class="demo-hint">拖动滑块调节每轨音量，点 M 单独静音。把伴奏调小，可以更清楚地对比原唱和换声。</p>
     </div>
   </div>
 </section>
@@ -291,6 +347,108 @@ sudo bash deploy_linux.sh --skip-models</pre>
 </footer>
 
 <script>
+  /* Demo player: 三轨同步播放，每轨独立音量 / 静音 */
+  (function () {
+    var TRACKS = [
+      { id: 'track-original',    src: 'demo/original.wav' },
+      { id: 'track-converted',   src: 'demo/converted.wav' },
+      { id: 'track-accompaniment', src: 'demo/accompaniment.wav' }
+    ];
+    var audios = TRACKS.map(function (t) {
+      var a = new Audio();
+      a.preload = 'auto';
+      a.src = t.src;
+      a.volume = 1;
+      a.dataset.track = t.id;
+      document.body.appendChild(a);
+      return a;
+    });
+    var trackEls = TRACKS.map(function (t) { return document.getElementById(t.id); });
+    var playBtn = document.getElementById('demoPlay');
+    var progressEl = document.getElementById('demoProgress');
+    var timeEl = document.getElementById('demoTime');
+    var playing = false;
+    var started = false;
+
+    function anyReady() { return audios.some(function (a) { return a.readyState >= 1; }); }
+    function firstReady() {
+      for (var i = 0; i < audios.length; i++) if (audios[i].readyState >= 1) return audios[i];
+      return audios[0];
+    }
+    function fmt(s) {
+      if (!isFinite(s) || s < 0) s = 0;
+      var m = Math.floor(s / 60), ss = Math.floor(s % 60);
+      return m + ':' + (ss < 10 ? '0' : '') + ss;
+    }
+
+    playBtn.addEventListener('click', function () {
+      if (!anyReady()) { playBtn.textContent = '!'; setTimeout(function () { playBtn.textContent = '▶'; }, 800); return; }
+      if (playing) {
+        audios.forEach(function (a) { a.pause(); });
+        playing = false;
+        playBtn.textContent = '▶';
+      } else {
+        var ref = firstReady();
+        if (!started) {
+          audios.forEach(function (a) { try { a.currentTime = 0; } catch (e) {} });
+          started = true;
+        }
+        var t = ref.currentTime || 0;
+        audios.forEach(function (a) { if (a.readyState >= 1) { try { a.currentTime = t; } catch (e) {} } a.play().catch(function () {}); });
+        playing = true;
+        playBtn.textContent = '❚❚';
+      }
+    });
+
+    progressEl.addEventListener('click', function (e) {
+      var ref = firstReady();
+      if (!ref || !ref.duration) return;
+      var r = progressEl.getBoundingClientRect();
+      var pct = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+      var t = pct * ref.duration;
+      audios.forEach(function (a) { if (a.readyState >= 1) { try { a.currentTime = t; } catch (err) {} } });
+    });
+
+    function tick() {
+      var ref = firstReady();
+      if (ref && ref.duration) {
+        var t = ref.currentTime || 0;
+        progressEl.value = Math.round(t / ref.duration * 1000);
+        timeEl.textContent = fmt(t) + ' / ' + fmt(ref.duration);
+        if (playing && t >= ref.duration - 0.3) {
+          playing = false; started = false;
+          playBtn.textContent = '▶';
+        }
+      }
+    }
+    setInterval(tick, 250);
+
+    /* 每轨音量 + 静音 */
+    trackEls.forEach(function (row, i) {
+      var audio = audios[i];
+      var vol = row.querySelector('.demo-vol');
+      var pct = row.querySelector('.demo-vol-pct');
+      var muteBtn = row.querySelector('.demo-mute');
+      var muted = false;
+      vol.addEventListener('input', function () {
+        audio.volume = vol.value / 100;
+        pct.textContent = vol.value + '%';
+        if (muted) {
+          muted = false;
+          row.classList.remove('muted');
+          audio.muted = false;
+          muteBtn.textContent = 'M';
+        }
+      });
+      muteBtn.addEventListener('click', function () {
+        muted = !muted;
+        row.classList.toggle('muted', muted);
+        audio.muted = muted;
+        muteBtn.textContent = muted ? '🔇' : 'M';
+      });
+    });
+  })();
+
   document.querySelectorAll('.tab-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
