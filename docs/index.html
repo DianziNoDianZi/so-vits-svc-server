@@ -104,6 +104,7 @@
   background: linear-gradient(135deg, var(--accent), #6f7bff); color: #fff;
   font-size: 17px; flex: none; transition: transform 0.12s ease;
 }
+.demo-play:disabled { background: #2b3a6b; color: #7d8ab3; cursor: wait; }
 .demo-play:hover { transform: scale(1.05); }
 .demo-master progress {
   flex: 1; height: 6px; border: none; border-radius: 3px; cursor: pointer;
@@ -129,6 +130,7 @@
 .demo-track.muted .name { color: var(--muted); }
 .demo-vol { flex: 1; accent-color: var(--accent); cursor: pointer; }
 .demo-vol-pct { width: 44px; font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; flex: none; }
+.demo-disclaimer { max-width: 760px; margin: 14px auto 0; font-size: 12px; color: #6b789e; text-align: center; }
 
 /* Workflow */
 .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; counter-reset: step; }
@@ -249,6 +251,7 @@
 
       <p class="demo-hint">拖动滑块调节每轨音量，点 M 单独静音。把伴奏调小，可以更清楚地对比原唱和换声。</p>
     </div>
+    <p class="demo-disclaimer">试听音频由 AI 模型对歌曲片段做声音转换生成，仅用于演示项目效果，版权归原版权方所有。</p>
   </div>
 </section>
 
@@ -350,9 +353,9 @@ sudo bash deploy_linux.sh --skip-models</pre>
   /* Demo player: 三轨同步播放，每轨独立音量 / 静音 */
   (function () {
     var TRACKS = [
-      { id: 'track-original',    src: 'demo/original.wav' },
-      { id: 'track-converted',   src: 'demo/converted.wav' },
-      { id: 'track-accompaniment', src: 'demo/accompaniment.wav' }
+      { id: 'track-original',    src: 'demo/original.mp3' },
+      { id: 'track-converted',   src: 'demo/converted.mp3' },
+      { id: 'track-accompaniment', src: 'demo/accompaniment.mp3' }
     ];
     var audios = TRACKS.map(function (t) {
       var a = new Audio();
@@ -369,8 +372,8 @@ sudo bash deploy_linux.sh --skip-models</pre>
     var timeEl = document.getElementById('demoTime');
     var playing = false;
     var started = false;
+    var ready = false;
 
-    function anyReady() { return audios.some(function (a) { return a.readyState >= 1; }); }
     function firstReady() {
       for (var i = 0; i < audios.length; i++) if (audios[i].readyState >= 1) return audios[i];
       return audios[0];
@@ -381,8 +384,37 @@ sudo bash deploy_linux.sh --skip-models</pre>
       return m + ':' + (ss < 10 ? '0' : '') + ss;
     }
 
+    /* 三轨都缓冲完才能播放（避免边下边放卡顿） */
+    function loadProgress() {
+      var total = 0;
+      for (var i = 0; i < audios.length; i++) {
+        var a = audios[i];
+        if (a.readyState >= 1 && a.duration) {
+          if (a.buffered.length) total += a.buffered.end(a.buffered.length - 1) / a.duration;
+          else total += a.readyState >= 3 ? 1 : 0.5;
+        }
+      }
+      return Math.min(Math.round(total / audios.length * 100), 100);
+    }
+    function checkReady() {
+      ready = audios.every(function (a) {
+        return a.readyState >= 3 || (a.buffered.length && a.buffered.end(a.buffered.length - 1) >= a.duration - 0.5);
+      });
+      if (ready) {
+        playBtn.textContent = playing ? '❚❚' : '▶';
+        playBtn.disabled = false;
+        timeEl.textContent = timeEl.textContent.split('（')[0];
+      } else {
+        playBtn.disabled = true;
+        playBtn.textContent = '…';
+        timeEl.textContent = '缓冲 ' + loadProgress() + '%';
+      }
+      setTimeout(checkReady, 400);
+    }
+    checkReady();
+
     playBtn.addEventListener('click', function () {
-      if (!anyReady()) { playBtn.textContent = '!'; setTimeout(function () { playBtn.textContent = '▶'; }, 800); return; }
+      if (!ready) return;
       if (playing) {
         audios.forEach(function (a) { a.pause(); });
         playing = false;
@@ -411,7 +443,7 @@ sudo bash deploy_linux.sh --skip-models</pre>
 
     function tick() {
       var ref = firstReady();
-      if (ref && ref.duration) {
+      if (ref && ref.duration && ready) {
         var t = ref.currentTime || 0;
         progressEl.value = Math.round(t / ref.duration * 1000);
         timeEl.textContent = fmt(t) + ' / ' + fmt(ref.duration);
