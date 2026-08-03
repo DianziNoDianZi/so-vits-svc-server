@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="So-VITS-SVC 服务器：开箱即用的 AI 声音转换 Web 平台，支持推理、训练、续训、监控、一键 CPU/GPU 部署。">
+<title>So-VITS-SVC Server — 开箱即用的 AI 声音转换 Web 平台</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --bg-soft: #111a33;
+    --card: #151f3d;
+    --border: #25335f;
+    --text: #e8edff;
+    --muted: #9aa7cc;
+    --accent: #5b8cff;
+    --accent-2: #7ee0c2;
+    --warn: #ffc46b;
+    --radius: 14px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: radial-gradient(1200px 600px at 80% -10%, #1c2b5c 0%, var(--bg) 55%) fixed;
+    color: var(--text);
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.7;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* Nav */
+  nav {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(8px);
+    background: rgba(11, 16, 32, 0.82);
+    border-bottom: 1px solid var(--border);
+  }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .brand { font-weight: 700; font-size: 17px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+  .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent-2); box-shadow: 0 0 10px var(--accent-2); }
+  nav .links { display: flex; gap: 22px; font-size: 14px; }
+  nav .links a { color: var(--muted); }
+  nav .links a:hover { color: var(--text); text-decoration: none; }
+
+  /* Hero */
+  header.hero { padding: 84px 0 64px; text-align: center; }
+  .hero .badge {
+    display: inline-block; padding: 5px 14px; border-radius: 999px;
+    background: rgba(94, 140, 255, 0.14); border: 1px solid #2d4378;
+    color: var(--accent); font-size: 13px; margin-bottom: 22px;
+  }
+  .hero h1 { font-size: clamp(30px, 5vw, 48px); font-weight: 800; letter-spacing: 0.5px; }
+  .hero h1 .grad {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero p.sub { max-width: 680px; margin: 18px auto 0; color: var(--muted); font-size: 17px; }
+  .hero .cta { margin-top: 32px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 11px 26px; border-radius: 10px; font-size: 15px; font-weight: 600;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); }
+  .btn.primary { background: linear-gradient(90deg, var(--accent), #6f7bff); color: #fff; box-shadow: 0 6px 22px rgba(91, 140, 255, 0.35); }
+  .btn.ghost { border: 1px solid var(--border); color: var(--text); background: rgba(255,255,255,0.03); }
+  .hero .meta { margin-top: 26px; color: var(--muted); font-size: 13px; display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+  .hero .meta b { color: var(--text); font-weight: 600; }
+
+  /* Sections */
+  section { padding: 60px 0; }
+  section h2 { font-size: 26px; font-weight: 700; text-align: center; }
+  section h2 .grad {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  section .lead { text-align: center; color: var(--muted); max-width: 640px; margin: 10px auto 42px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 18px; }
+  .card {
+    background: linear-gradient(180deg, var(--card), rgba(21,31,61,0.6));
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 24px 22px; transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+  .card:hover { border-color: #3c5188; transform: translateY(-2px); }
+  .card .icon { font-size: 24px; margin-bottom: 12px; }
+  .card h3 { font-size: 16px; margin-bottom: 8px; }
+  .card p { font-size: 14px; color: var(--muted); }
+
+  /* Workflow */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; counter-reset: step; }
+  .step {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px 18px; position: relative;
+  }
+  .step::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; top: 14px; right: 16px;
+    font-size: 30px; font-weight: 800; color: rgba(91,140,255,0.18);
+  }
+  .step h4 { font-size: 15px; margin-bottom: 6px; }
+  .step p { font-size: 13px; color: var(--muted); }
+
+  /* Tabs (quickstart) */
+  .tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
+  .tab-btn {
+    padding: 8px 18px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted); font-size: 14px; cursor: pointer;
+    font-family: inherit; transition: all 0.12s ease;
+  }
+  .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  pre {
+    background: #0a1024; border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 20px; overflow-x: auto; font-size: 13.5px; line-height: 1.75;
+    font-family: Consolas, "Courier New", monospace;
+  }
+  pre .cm { color: #5d6f9c; }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; background: var(--card); border-radius: var(--radius); overflow: hidden; }
+  th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: rgba(91,140,255,0.10); color: var(--text); font-weight: 600; }
+  td { color: var(--muted); }
+  tr:last-child td { border-bottom: none; }
+  .table-note { margin-top: 12px; font-size: 13px; color: var(--muted); }
+
+  /* License */
+  .license { background: linear-gradient(180deg, var(--card), rgba(21,31,61,0.5)); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; }
+  .license h3 { margin-bottom: 10px; }
+  .license p { font-size: 14px; color: var(--muted); margin-bottom: 8px; }
+
+  footer { border-top: 1px solid var(--border); padding: 26px 0 34px; text-align: center; color: var(--muted); font-size: 13px; }
+  footer .links { margin-bottom: 10px; display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+
+  @media (max-width: 640px) {
+    nav .links { display: none; }
+    header.hero { padding: 60px 0 44px; }
+    section { padding: 44px 0; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <span class="brand"><span class="dot"></span>So-VITS-SVC Server</span>
+    <div class="links">
+      <a href="#features">功能</a>
+      <a href="#workflow">使用流程</a>
+      <a href="#quickstart">快速开始</a>
+      <a href="#models">预训练模型</a>
+      <a href="#license">开源协议</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="badge">AGPL-3.0 · 推理 + 训练 · 一键部署</span>
+    <h1>开箱即用的<br><span class="grad">AI 声音转换</span> Web 平台</h1>
+    <p class="sub">在浏览器里完成 so-vits-svc 的全部流程：上传数据集、队列训练、实时监控、
+    随时停止试听、续训、推理换声。纯 CPU 服务器也能跑，支持 NVIDIA / AMD / CPU 一键部署。</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/DianziNoDianZi/so-vits-svc-server" target="_blank" rel="noopener">GitHub 仓库</a>
+      <a class="btn ghost" href="https://gitee.com/DianZiNoDianZi/so-vits-svc-inference" target="_blank" rel="noopener">Gitee 镜像</a>
+    </div>
+    <div class="meta">
+      <span>多用户登录</span><span>·</span><span>任务队列</span><span>·</span>
+      <span>Loss 曲线监控</span><span>·</span><span>邮件通知</span>
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <h2>核心<span class="grad">功能</span></h2>
+    <p class="lead">把 so-vits-svc 从命令行搬进浏览器，普通人也能完成声音克隆的全部流程。</p>
+    <div class="grid">
+      <div class="card"><div class="icon">🎤</div><h3>推理换声</h3><p>上传模型 + 音频即可 SVC 换声，支持浅扩散（k_step）修音，推理任务实时看进度。</p></div>
+      <div class="card"><div class="icon">🏋️</div><h3>训练 + 续训</h3><p>数据集 zip 提交队列训练；主模型、扩散模型都支持从 checkpoint 继续训练。</p></div>
+      <div class="card"><div class="icon">⏹️</div><h3>中途停止测试</h3><p>训练中随时停止，自动保存当前 checkpoint 并注册为模型，立刻推理试听效果。</p></div>
+      <div class="card"><div class="icon">📈</div><h3>训练监控</h3><p>实时日志、Loss 曲线、验证集 loss（判断过拟合）、ETA 预估，一眼看清训练状态。</p></div>
+      <div class="card"><div class="icon">🗑️</div><h3>精确清理</h3><p>按单个任务 / 模型 / 数据集清理垃圾数据，误伤前有检查提示。</p></div>
+      <div class="card"><div class="icon">📁</div><h3>文件管理</h3><p>网页自由下载 / 删除服务器上的模型、配置、推理结果与数据集。</p></div>
+      <div class="card"><div class="icon">🧩</div><h3>预训练页</h3><p>网页上传管理 ContentVec、NSF-HiFiGAN、训练底模 G_0/D_0、RMVPE 等，无需 SSH。</p></div>
+      <div class="card"><div class="icon">📧</div><h3>邮件通知</h3><p>训练完成、按步数进度、推理完成自动邮件报告，SMTP 服务器可自定义。</p></div>
+      <div class="card"><div class="icon">🛡️</div><h3>安全加固</h3><p>CSRF 防护、登录限速、路径穿越防护、持久化会话密钥、上传校验。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="workflow">
+  <div class="wrap">
+    <h2>使用<span class="grad">流程</span></h2>
+    <p class="lead">训练与推理两条主线，全部在浏览器里完成。</p>
+    <div class="steps">
+      <div class="step"><h4>上传数据集</h4><p>打包 zip 上传，自动过滤 2 秒以下的短片段</p></div>
+      <div class="step"><h4>队列训练</h4><p>设置总步数、auto_stop、编码器，底模自动加载</p></div>
+      <div class="step"><h4>监控 Loss</h4><p>看 train / 验证 loss 判断是否过拟合</p></div>
+      <div class="step"><h4>随时停止试听</h4><p>满意就停止，checkpoint 自动保存为模型</p></div>
+      <div class="step"><h4>训练扩散</h4><p>主模型训好后一键进入扩散训练</p></div>
+      <div class="step"><h4>上传推理</h4><p>上传音频 → 提交任务 → 下载结果</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="quickstart">
+  <div class="wrap">
+    <h2>快速<span class="grad">开始</span></h2>
+    <p class="lead">Windows 一条命令安装；Linux 一键部署，自动走国内镜像。</p>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="win">Windows</button>
+      <button class="tab-btn" data-tab="linux">Linux（GPU / CPU）</button>
+    </div>
+    <div class="tab-panel active" id="tab-win">
+      <pre><span class="cm"># 安装（自动创建 venv + 安装 CPU/CUDA torch 与依赖）</span>
+install.bat
+
+<span class="cm"># 启动服务，浏览器访问 http://localhost:5000</span>
+start.bat</pre>
+    </div>
+    <div class="tab-panel" id="tab-linux">
+      <pre><span class="cm"># 下载项目后执行（需 root；支持 NVIDIA CUDA / AMD ROCm / 纯 CPU，自动切换 PyTorch）</span>
+chmod +x deploy_linux.sh
+sudo bash deploy_linux.sh
+
+<span class="cm"># 网络慢可跳过模型下载，部署后在网页"预训练"页补传</span>
+sudo bash deploy_linux.sh --skip-models</pre>
+    </div>
+    <p class="table-note">部署脚本会自动安装 ffmpeg / libsndfile / cmake 等系统依赖，并接入清华、阿里云国内镜像安装 Miniconda 与 Python 3.9 环境。</p>
+  </div>
+</section>
+
+<section id="models">
+  <div class="wrap">
+    <h2>预训练<span class="grad">模型</span></h2>
+    <p class="lead">推理必需 ContentVec + NSF-HiFiGAN；训练底模 G_0 / D_0 可选但推荐。</p>
+    <table>
+      <tr><th>文件</th><th>大小</th><th>获取方式</th></tr>
+      <tr><td><code>checkpoint_best_legacy_500.pt</code></td><td>~180 MB</td><td>部署脚本自动下载，或网页上传</td></tr>
+      <tr><td><code>nsf_hifigan/model</code> + config</td><td>~54 MB</td><td>同上</td></tr>
+      <tr><td><code>G_0.pth</code> + <code>D_0.pth</code></td><td>~400 MB</td><td>网页上传（推荐）</td></tr>
+      <tr><td><code>rmvpe.pt</code> 等编码器</td><td>可选</td><td>网页"预训练"页上传</td></tr>
+    </table>
+    <p class="table-note">大文件建议 scp 直接放入 <code>pretrain/</code> 目录，网页会自动识别。</p>
+  </div>
+</section>
+
+<section id="license">
+  <div class="wrap">
+    <div class="license">
+      <h3>开源协议 AGPL-3.0</h3>
+      <p>本项目是 <a href="https://github.com/svc-develop-team/so-vits-svc" target="_blank" rel="noopener">so-vits-svc</a>（AGPL-3.0）的派生作品，整体以 <b>AGPL-3.0</b> 发布。完整对应源码在本仓库公开，满足网络服务提供源码的要求。</p>
+      <p>使用或二次分发时须保留版权与修改声明，并以相同协议分发。修改文件清单见仓库 NOTICE。</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="links">
+    <a href="https://github.com/DianziNoDianZi/so-vits-svc-server" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://gitee.com/DianZiNoDianZi/so-vits-svc-inference" target="_blank" rel="noopener">Gitee</a>
+    <a href="https://github.com/DianziNoDianZi/so-vits-svc-server/blob/master/README.md" target="_blank" rel="noopener">README</a>
+  </div>
+  <p>So-VITS-SVC Server · AGPL-3.0 · 派生自 so-vits-svc</p>
+</footer>
+
+<script>
+  document.querySelectorAll('.tab-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+      document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.remove('active'); });
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>
