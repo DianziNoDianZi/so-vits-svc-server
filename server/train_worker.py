@@ -94,6 +94,7 @@ def stop():
 def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_size=4, total_steps=4200, keep_ckpts=3,
         speech_encoder='vec768l12', f0_predictor='dio', learning_rate=0.0001, segment_size=10240,
         lr_decay=0.999875, auto_stop=200, log_interval=200, eval_interval=800,
+        arch='sovits-v1', d_lr_scale=1.0,
         diff_batch_size=48, diff_epochs=100000, diff_timesteps=1000, diff_kstep=0,
         diff_layers=20, diff_chans=512, diff_hidden=256, diff_lr=0.0001,
         diff_decay_step=100000, diff_gamma=0.5, diff_amp='fp32',
@@ -250,6 +251,7 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 if list((old_cfg.get('spk') or {}).keys()) != [speaker]:
                     old_cfg['spk'] = {speaker: 0}
                     old_cfg['model']['n_speakers'] = 1
+                old_cfg['model']['arch'] = arch
                 with open(config_path, 'w', encoding='utf-8') as f:
                     json.dump(old_cfg, f, indent=2, ensure_ascii=False)
                 log(f'续训: 复用上次训练配置 {saved_cfg}')
@@ -322,6 +324,8 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
             cfg['train']['num_workers'] = 4 if _ram_gb >= 16 else 0
             cfg['train']['max_steps'] = total_steps
             cfg['train']['auto_stop'] = auto_stop
+            cfg['model']['arch'] = arch
+            cfg['train']['d_lr_scale'] = d_lr_scale
             try:
                 import torch as _torch
                 _has_gpu = _torch.cuda.is_available()

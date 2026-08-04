@@ -121,7 +121,7 @@
                         <select name="resume_from" class="form-select bg-dark text-light border-secondary" id="resumeSelect" onchange="toggleResume()">
                             <option value="0">不续训，全新训练</option>
                             {% for t in history_resumable %}
-                            <option value="{{ t.id }}" data-step="{{ t.step }}">#{{ t.id }} {{ t.speaker }} ({{ t.model_type }}, checkpoint {{ t.step }}步)</option>
+                            <option value="{{ t.id }}" data-step="{{ t.step }}" data-arch="{{ t.arch }}">#{{ t.id }} {{ t.speaker }} ({{ t.model_type }}, checkpoint {{ t.step }}步)</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -136,6 +136,12 @@
                             input.parentElement.querySelector('small').textContent = '（续训模式，复用原数据集）';
                             var opt = sel.options[sel.selectedIndex];
                             var step = opt ? parseInt(opt.getAttribute('data-step') || '0', 10) : 0;
+                            var arch = opt ? opt.getAttribute('data-arch') || 'sovits-v1' : 'sovits-v1';
+                            var archSel = document.getElementById('archSelect');
+                            if (archSel) {
+                                archSel.value = arch;
+                                toggleArch(arch);
+                            }
                             var total = document.querySelector('input[name="total_steps"]');
                             if (total && step > 0 && total.dataset.manual !== '1') {
                                 total.value = step + 5000;
@@ -155,6 +161,31 @@
                             <option value="diffusion">仅扩散模型</option>
                         </select>
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label">模型架构</label>
+                        <select name="arch" class="form-select bg-dark text-light border-secondary" id="archSelect" onchange="toggleArch(this.value)">
+                            <option value="sovits-v1">SoVITS 4.1 (v1) [默认，兼容旧模型]</option>
+                            <option value="rvc">RVC 式轻量架构 [实验，训练更稳/更快，音色保持更好]</option>
+                        </select>
+                        <small class="text-secondary" id="archHint"></small>
+                    </div>
+                    <script>
+                        function toggleArch(val) {
+                            var hint = document.getElementById('archHint');
+                            var dscale = document.querySelector('input[name="d_lr_scale"]');
+                            if (val === 'rvc') {
+                                hint.textContent = '新架构：无 TextEncoder/Flow，特征直连解码器，从零训练（不加载 v1 底模）';
+                                if (dscale && !dscale.dataset.manual) dscale.value = '0.5';
+                            } else {
+                                hint.textContent = '经典架构，与现有模型完全兼容';
+                                if (dscale && !dscale.dataset.manual) dscale.value = '1.0';
+                            }
+                        }
+                        document.addEventListener('DOMContentLoaded', function () {
+                            var sel = document.getElementById('archSelect');
+                            if (sel) toggleArch(sel.value);
+                        });
+                    </script>
                     <div class="mb-3">
                         <label class="form-label">基础参数</label>
                     </div>
@@ -229,6 +260,13 @@
                                 <div class="col-6">
                                     <label class="text-secondary" style="font-size:12px;">eval_interval (步)</label>
                                     <input type="number" name="eval_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="800">
+                                </div>
+                            </div>
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">判别器 lr 缩放 (0~1)</label>
+                                    <input type="number" name="d_lr_scale" class="form-control form-control-sm bg-dark text-light border-secondary" value="1.0" step="0.05" min="0.05" max="1">
+                                    <small class="text-secondary">RVC 架构建议 0.5，前 1000 步压低判别器</small>
                                 </div>
                             </div>
                         </div>

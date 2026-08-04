@@ -1849,8 +1849,13 @@ def train_page():
                 if f.startswith('G_') and f.endswith('.pth'):
                     latest_step = max(latest_step, int(''.join(c for c in f if c.isdigit()) or 0))
         if latest_step > 0:
+            try:
+                _arch = (json.loads(t.params_json or '{}') or {}).get('arch', 'sovits-v1')
+            except Exception:
+                _arch = 'sovits-v1'
             history_resumable.append({
                 'id': t.id, 'speaker': t.speaker, 'model_type': t.model_type, 'step': latest_step,
+                'arch': _arch,
             })
     return render_template('train.html',
         active=active, log_content=log_content, pct=pct,
@@ -1923,6 +1928,8 @@ def train_submit():
         dataset_zip = filename
 
     params = {
+        'arch': request.form.get('arch', 'sovits-v1'),
+        'd_lr_scale': _flt('d_lr_scale', 1.0),
         'speech_encoder': request.form.get('speech_encoder', 'vec768l12'),
         'f0_predictor': request.form.get('f0_predictor', 'dio'),
         'learning_rate': _flt('learning_rate', 0.0001),
@@ -1943,6 +1950,17 @@ def train_submit():
         'diff_gamma': _flt('diff_gamma', 0.5),
         'diff_amp': request.form.get('diff_amp', 'fp32'),
     }
+
+    # 续训时继承原任务的模型架构（避免续训链上架构被表单默认值覆盖）
+    if resume_from:
+        try:
+            src_params = json.loads(src.params_json or '{}')
+        except Exception:
+            src_params = {}
+        if not request.form.get('arch'):
+            params['arch'] = src_params.get('arch', 'sovits-v1')
+        if not request.form.get('d_lr_scale'):
+            params['d_lr_scale'] = src_params.get('d_lr_scale', 1.0)
 
     mt = request.form.get('model_type', 'sovits')
     total_steps = _int('total_steps', 4200)
