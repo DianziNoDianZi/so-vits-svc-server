@@ -136,3 +136,4 @@ server/
 - CPU 服务器可推理；训练理论上可行但非常慢，建议 GPU 训练后上传模型
 - 国内网络部署：apt/conda/pip 全部走清华/阿里云镜像，torch 用 `--no-deps` 跳过 nvidia 包
 - fairseq 兼容需要 pip 24.0（脚本自动处理）；librosa 用 0.10.1 兼容新版 numpy/torch
+- 训练 DataLoader 默认 `num_workers=2`（内存充足自动升到 4，<8GB 降为 0）

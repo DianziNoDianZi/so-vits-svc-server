@@ -211,6 +211,12 @@ class Svc(object):
             _ = self.net_g_ms.eval().to(self.dev)
         if spk_mix_enable:
             self.net_g_ms.EnableCharacterMix(len(self.spk2id), self.dev)
+        # torch.compile（GPU 启用，CPU 跳过；SSVC_COMPILE=0 可关闭）
+        if torch.cuda.is_available() and os.environ.get('SSVC_COMPILE', '1') != '0':
+            try:
+                self.net_g_ms = torch.compile(self.net_g_ms, mode='reduce-overhead')
+            except Exception as e:
+                print(f'[infer] torch.compile 不可用，跳过: {e}')
 
     def get_unit_f0(self, wav, tran, cluster_infer_ratio, speaker, f0_filter ,f0_predictor,cr_threshold=0.05):
 

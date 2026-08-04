@@ -358,8 +358,8 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 _ram_gb = _psutil.virtual_memory().total / (1024 ** 3)
             except Exception:
                 _ram_gb = 0
-            # 内存不足时关掉 DataLoader 多进程，避免共享内存 OOM（Windows 1455）
-            cfg['train']['num_workers'] = 4 if _ram_gb >= 16 else 0
+            # 内存充足用 4 进程，否则退到 2；极低内存才关多进程（避免 Windows 1455）
+            cfg['train']['num_workers'] = 4 if _ram_gb >= 16 else (2 if _ram_gb >= 8 else 0)
             cfg['train']['max_steps'] = total_steps
             cfg['train']['auto_stop'] = auto_stop
             cfg['model']['arch'] = arch

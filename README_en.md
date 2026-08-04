@@ -109,3 +109,4 @@ server/
 - CPU servers can run inference; training is possible but very slow — prefer GPU training then upload models
 - Deploying behind the GFW: apt/conda/pip all use Tsinghua/Aliyun mirrors; torch uses `--no-deps` to skip nvidia packages
 - fairseq needs pip 24.0 (handled by the script); librosa 0.10.1 for newer numpy/torch compatibility
+- Training DataLoader defaults to `num_workers=2` (auto-upgrades to 4 with enough RAM, drops to 0 below 8GB)

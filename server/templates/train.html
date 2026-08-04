@@ -44,18 +44,18 @@
                 <p class="text-info">扩散 epoch: {{ diff_epoch }} / {{ diff_total_epochs }}</p>
                 {% endif %}
                 {% elif total_steps > 0 %}
-                <p class="text-info">步数: {{ current_step }} / {{ total_steps }}</p>
+                <p class="text-info" id="train-steps">步数: {{ current_step }} / {{ total_steps }}</p>
                 {% endif %}
                 {% if elapsed or eta %}
-                <p class="text-secondary">已用: {{ elapsed }} | 预计剩余: {{ eta }}</p>
+                <p class="text-secondary" id="train-time">已用: {{ elapsed }} | 预计剩余: {{ eta }}</p>
                 {% endif %}
                 {% if eval_mel is not none %}
-                <p class="text-warning">验证 mel: {{ eval_mel }}（step {{ eval_step }}，与训练 mel 对比可判断过拟合）</p>
+                <p class="text-warning" id="train-eval">验证 mel: {{ eval_mel }}（step {{ eval_step }}，与训练 mel 对比可判断过拟合）</p>
                 {% endif %}
                 <div class="progress mb-2">
-                    <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: {{ pct }}%"></div>
+                    <div id="train-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: {{ pct }}%"></div>
                 </div>
-                <small class="text-secondary">{{ pct }}%</small>
+                <small class="text-secondary" id="train-pct">{{ pct }}%</small>
 
                 {% if loss_data and loss_data != '[]' %}
                 <div class="mt-2 mb-2">
@@ -67,7 +67,7 @@
                 var labels = ld.map(function(_,i){return i;});
                 var gData = ld.map(function(d){return d.g;});
                 var dData = ld.map(function(d){return d.d;});
-                new Chart(ctx, {
+                window.lossChartInst = new Chart(ctx, {
                     type: 'line',
                     data: {
                         labels: labels,
@@ -92,7 +92,52 @@
                 {% if active.log_path %}
                 <pre id="train-log" class="bg-black text-success p-2 rounded" style="max-height:300px;overflow:auto;font-size:12px;">{{ log_content }}</pre>
                 <script>
-                    setTimeout(function(){ location.reload(); }, 10000);
+                    /* 局部更新：只刷日志区/进度条/图表，不整页刷新 */
+                    (function () {
+                        var tid = {{ active.id }};
+                        var lastLen = document.getElementById('train-log').textContent.length;
+                        function update() {
+                            fetch('/api/train/' + tid + '/status', {headers: {'X-Requested-With': 'fetch'}})
+                                .then(function (r) { return r.json(); })
+                                .then(function (info) {
+                                    var logEl = document.getElementById('train-log');
+                                    if (logEl && info.log_tail) {
+                                        logEl.textContent = info.log_tail;
+                                        if (info.log_tail.length >= lastLen) {
+                                            logEl.scrollTop = logEl.scrollHeight;
+                                        }
+                                        lastLen = info.log_tail.length;
+                                    }
+                                    var bar = document.getElementById('train-progress-bar');
+                                    var pctEl = document.getElementById('train-pct');
+                                    if (bar && pctEl) {
+                                        bar.style.width = (info.pct || 0) + '%';
+                                        pctEl.textContent = (info.pct || 0) + '%';
+                                    }
+                                    var steps = document.getElementById('train-steps');
+                                    if (steps && info.total_steps > 0) {
+                                        steps.textContent = '步数: ' + (info.current_step || 0) + ' / ' + info.total_steps;
+                                    }
+                                    var tEl = document.getElementById('train-time');
+                                    if (tEl) {
+                                        tEl.textContent = '已用: ' + (info.elapsed || '') + ' | 预计剩余: ' + (info.eta || '');
+                                    }
+                                    var evEl = document.getElementById('train-eval');
+                                    if (evEl && info.eval_mel !== null && info.eval_mel !== undefined) {
+                                        evEl.textContent = '验证 mel: ' + info.eval_mel + '（step ' + (info.eval_step || 0) + '，与训练 mel 对比可判断过拟合）';
+                                    }
+                                    if (window.lossChartInst && info.loss_data && info.loss_data.length) {
+                                        var ch = window.lossChartInst;
+                                        ch.data.labels = info.loss_data.map(function (_, i) { return i; });
+                                        ch.data.datasets[0].data = info.loss_data.map(function (d) { return d.g; });
+                                        ch.data.datasets[1].data = info.loss_data.map(function (d) { return d.d; });
+                                        ch.update();
+                                    }
+                                })
+                                .catch(function () {});
+                        }
+                        setInterval(update, 5000);
+                    })();
                 </script>
                 {% endif %}
             </div>
@@ -105,7 +150,7 @@
             <div class="card-body">
                 <h4 class="card-title text-light">提交训练任务</h4>
                 <p class="text-secondary">上传zip格式的数据集（内为直接可用的音频文件）</p>
-                <form action="{{ url_for('train_submit') }}" method="POST" enctype="multipart/form-data">
+                <form action="{{ url_for('train_submit') }}" method="POST" enctype="multipart/form-data" onsubmit="return confirm('确定提交训练任务？提交后将进入队列');">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label class="form-label">说话人名称</label>
@@ -196,6 +241,36 @@
                             var sel = document.getElementById('archSelect');
                             if (sel) toggleArch(sel.value);
                         });
+                    </script>
+                    <div class="mb-3">
+                        <label class="form-label">参数预设</label>
+                        <select class="form-select bg-dark text-light border-secondary" id="presetSelect" onchange="applyPreset(this.value)">
+                            <option value="">— 自定义 —</option>
+                            <option value="fast">快速试验（2000 步 / RVC / 判别器 0.5）</option>
+                            <option value="standard">标准（10000 步 / RVC）</option>
+                            <option value="high">高质量（20000 步 / v1）</option>
+                        </select>
+                    </div>
+                    <script>
+                        function applyPreset(val) {
+                            if (!val) return;
+                            var total = document.querySelector('input[name="total_steps"]');
+                            var arch = document.getElementById('archSelect');
+                            var dscale = document.querySelector('input[name="d_lr_scale"]');
+                            if (val === 'fast') {
+                                if (total) { total.value = 2000; total.dataset.manual = '1'; }
+                                if (arch) { arch.value = 'rvc'; toggleArch('rvc'); }
+                                if (dscale) { dscale.value = 0.5; dscale.dataset.manual = '1'; }
+                            } else if (val === 'standard') {
+                                if (total) { total.value = 10000; total.dataset.manual = '1'; }
+                                if (arch) { arch.value = 'rvc'; toggleArch('rvc'); }
+                                if (dscale) { dscale.value = 1.0; dscale.dataset.manual = '1'; }
+                            } else if (val === 'high') {
+                                if (total) { total.value = 20000; total.dataset.manual = '1'; }
+                                if (arch) { arch.value = 'sovits-v1'; toggleArch('sovits-v1'); }
+                                if (dscale) { dscale.value = 1.0; dscale.dataset.manual = '1'; }
+                            }
+                        }
                     </script>
                     <div class="mb-3">
                         <label class="form-label">基础参数</label>
@@ -354,73 +429,13 @@
                             </div>
                         </div>
                     </div>
-                    <button type="submit" id="train-submit-btn" class="btn btn-warning w-100" {{ 'disabled' if alive else '' }}>按住 3 秒确认提交</button>
-                    <div id="train-submit-progress" class="progress mt-1" style="height:4px;display:none;">
-                        <div id="train-submit-bar" class="progress-bar bg-warning" style="width:0%"></div>
-                    </div>
+                    <button type="submit" class="btn btn-warning w-100" {{ 'disabled' if alive else '' }}>提交训练</button>
                     {% if alive %}<small class="text-danger">训练进行中，请等待完成后再提交新任务</small>{% endif %}
                 </form>
             </div>
         </div>
     </div>
 </div>
-
-<script>
-var btn = document.getElementById('train-submit-btn');
-if (btn && !btn.disabled) {
-    var holdTimer = null;
-    var holdInterval = null;
-    var holdPct = 0;
-    var bar = document.getElementById('train-submit-bar');
-    var prog = document.getElementById('train-submit-progress');
-
-    btn.addEventListener('mousedown', function(e) {
-        if (btn.disabled) return;
-        prog.style.display = 'block';
-        holdPct = 0;
-        bar.style.width = '0%';
-        btn.textContent = '松开取消';
-        holdTimer = setTimeout(function() {
-            btn.textContent = '确认提交';
-            bar.style.width = '100%';
-            btn.form.submit();
-        }, 3000);
-        holdInterval = setInterval(function() {
-            holdPct += 100/30;
-            bar.style.width = Math.min(holdPct, 100) + '%';
-        }, 100);
-    });
-
-    var cancel = function() {
-        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-        if (holdInterval) { clearInterval(holdInterval); holdInterval = null; }
-        prog.style.display = 'none';
-        bar.style.width = '0%';
-        btn.textContent = '按住 3 秒确认提交';
-    };
-
-    btn.addEventListener('mouseup', cancel);
-    btn.addEventListener('mouseleave', cancel);
-    btn.addEventListener('touchstart', function(e) {
-        if (btn.disabled) return;
-        prog.style.display = 'block';
-        holdPct = 0;
-        bar.style.width = '0%';
-        btn.textContent = '松开取消';
-        holdTimer = setTimeout(function() {
-            btn.textContent = '确认提交';
-            bar.style.width = '100%';
-            btn.form.submit();
-        }, 3000);
-        holdInterval = setInterval(function() {
-            holdPct += 100/30;
-            bar.style.width = Math.min(holdPct, 100) + '%';
-        }, 100);
-    });
-    btn.addEventListener('touchend', cancel);
-    btn.addEventListener('touchcancel', cancel);
-}
-</script>
 
 <div class="card bg-dark border-secondary mt-3">
     <div class="card-body">

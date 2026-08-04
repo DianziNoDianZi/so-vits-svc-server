@@ -1918,7 +1918,7 @@ def api_train_status(tid):
             'loss_data': [], 'elapsed': '', 'eta': '',
             'eval_mel': None, 'eval_step': 0,
         }
-    info.pop('log_tail', None)
+    # log_tail 保留给训练页 fetch 局部更新（每次约 5KB，可接受）
     stage_label = dict(STAGES).get(info.get('stage', ''), '')
     return jsonify({'status': task.status, 'progress_msg': task.progress_msg, 'stage_label': stage_label, **info})
 

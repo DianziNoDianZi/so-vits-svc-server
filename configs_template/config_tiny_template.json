@@ -25,6 +25,7 @@
     "keep_ckpts": 3,
     "all_in_mem": false,
     "vol_aug":false,
+    "num_workers": 2,
     "d_lr_scale": 1.0
   },
   "data": {

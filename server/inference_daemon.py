@@ -85,6 +85,7 @@ def _model_key(p):
         p.get('diff_config_path', ''),
         p.get('cluster_path', ''),
         bool(p.get('k_step', 0) > 0 and p.get('diff_path')),
+        p.get('device_resolved', p.get('device', 'auto')),
     )
 
 
@@ -212,6 +213,9 @@ def main(q, done_q, cache_size):
             if device == 'cpu':
                 torch.set_num_threads(2)
 
+            # 实际设备写回 payload，参与缓存 key（避免 cuda/cpu 混用命中）
+            payload = dict(payload)
+            payload['device_resolved'] = device
             old_cwd = os.getcwd()
             os.chdir(PROJECT_DIR)
             try:
