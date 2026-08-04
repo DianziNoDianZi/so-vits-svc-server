@@ -191,6 +191,14 @@
                             var flowSel = document.querySelector('select[name="flow_mode"]');
                             if (flowSel) flowSel.value = flowMode;
                             var total = document.querySelector('input[name="total_steps"]');
+                            var totalLabel = document.getElementById('totalStepsLabel');
+                            if (totalLabel) {
+                                if (step > 0) {
+                                    totalLabel.textContent = '目标总步数（当前 checkpoint 已 ' + step + ' 步，须大于它）';
+                                } else {
+                                    totalLabel.textContent = '总步数';
+                                }
+                            }
                             if (total && step > 0 && total.dataset.manual !== '1') {
                                 total.value = step + 5000;
                             }
@@ -198,6 +206,8 @@
                             input.required = true;
                             input.disabled = false;
                             input.parentElement.querySelector('small').textContent = '（续训时不用传）';
+                            var totalLabel2 = document.getElementById('totalStepsLabel');
+                            if (totalLabel2) totalLabel2.textContent = '总步数';
                         }
                     }
                     </script>
@@ -278,7 +288,7 @@
                     <div class="row mb-2">
                         <div class="col-4">
                             <input type="number" name="total_steps" class="form-control bg-dark text-light border-secondary" value="4200" min="1" max="200000" placeholder="训练步数" oninput="this.dataset.manual='1'">
-                            <small class="text-secondary">总步数</small>
+                            <small class="text-secondary" id="totalStepsLabel">总步数</small>
                         </div>
                         <div class="col-4">
                             <input type="number" name="batch_size" class="form-control bg-dark text-light border-secondary" value="4" min="1" max="16" placeholder="batch_size">

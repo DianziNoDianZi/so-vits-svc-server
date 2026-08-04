@@ -2186,8 +2186,8 @@ def train_submit():
     mt = request.form.get('model_type', 'sovits')
     total_steps = _int('total_steps', 4200)
     if chain_id and resume_latest > 0 and total_steps <= resume_latest:
-        total_steps = resume_latest + max(total_steps, 1000)
-        flash(f'续训：当前 checkpoint 已到 {resume_latest} 步，总步数自动调整为 {total_steps} 步', 'success')
+        flash(f'续训目标步数 {total_steps} 必须大于当前 checkpoint 的 {resume_latest} 步，请重新填写', 'danger')
+        return redirect(url_for('train_page'))
     log_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{int(time.time())}')
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, 'train.log')
