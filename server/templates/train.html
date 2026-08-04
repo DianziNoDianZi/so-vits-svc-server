@@ -57,37 +57,60 @@
                 </div>
                 <small class="text-secondary" id="train-pct">{{ pct }}%</small>
 
-                {% if loss_data and loss_data != '[]' %}
-                <div class="mt-2 mb-2">
-                    <canvas id="lossChart" height="120"></canvas>
-                </div>
                 <script>
-                var ld = {{ loss_data|safe }};
-                var ctx = document.getElementById('lossChart').getContext('2d');
-                var labels = ld.map(function(_,i){return i;});
-                var gData = ld.map(function(d){return d.g;});
-                var dData = ld.map(function(d){return d.d;});
-                window.lossChartInst = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [
-                            {label:'G Loss', data:gData, borderColor:'#0d6efd', borderWidth:1, pointRadius:0, fill:false},
-                            {label:'D Loss', data:dData, borderColor:'#dc3545', borderWidth:1, pointRadius:0, fill:false}
-                        ]
-                    },
-                    options: {
-                        responsive: true,
-                        animation: false,
-                        plugins: {legend:{labels:{color:'#adb5bd',font:{size:10}}}},
-                        scales: {
-                            x:{display:false},
-                            y:{ticks:{color:'#6c757d',font:{size:9}}, grid:{color:'#495057'}}
+                /* loss 曲线：初始有数据直接建，后续 fetch 到数据时动态创建/更新 */
+                function ensureLossChart(ld) {
+                    if (!ld || !ld.length) return;
+                    if (typeof Chart === 'undefined') return;  // Chart.js 未加载（CDN 失败等）
+                    if (window.lossChartInst) {
+                        var ch = window.lossChartInst;
+                        ch.data.labels = ld.map(function (_, i) { return i; });
+                        ch.data.datasets[0].data = ld.map(function (d) { return d.g; });
+                        ch.data.datasets[1].data = ld.map(function (d) { return d.d; });
+                        ch.update();
+                        return;
+                    }
+                    var box = document.getElementById('lossChartBox');
+                    if (!box) {
+                        box = document.createElement('div');
+                        box.id = 'lossChartBox';
+                        box.className = 'mt-2 mb-2';
+                        box.innerHTML = '<canvas id="lossChart" height="120"></canvas>';
+                        var logPre = document.getElementById('train-log');
+                        if (logPre && logPre.parentNode) {
+                            logPre.parentNode.insertBefore(box, logPre);
+                        } else {
+                            var stepsEl = document.getElementById('train-steps');
+                            if (stepsEl && stepsEl.parentNode) stepsEl.parentNode.appendChild(box);
+                            else document.body.appendChild(box);
                         }
                     }
-                });
-                </script>
+                    var canvas = document.getElementById('lossChart');
+                    if (!canvas) return;
+                    window.lossChartInst = new Chart(canvas.getContext('2d'), {
+                        type: 'line',
+                        data: {
+                            labels: ld.map(function (_, i) { return i; }),
+                            datasets: [
+                                {label:'G Loss', data:ld.map(function(d){return d.g;}), borderColor:'#0d6efd', borderWidth:1, pointRadius:0, fill:false},
+                                {label:'D Loss', data:ld.map(function(d){return d.d;}), borderColor:'#dc3545', borderWidth:1, pointRadius:0, fill:false}
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            animation: false,
+                            plugins: {legend:{labels:{color:'#adb5bd',font:{size:10}}}},
+                            scales: {
+                                x:{display:false},
+                                y:{ticks:{color:'#6c757d',font:{size:9}}, grid:{color:'#495057'}}
+                            }
+                        }
+                    });
+                }
+                {% if loss_data and loss_data != '[]' %}
+                ensureLossChart({{ loss_data|safe }});
                 {% endif %}
+                </script>
 
                 {% if active.log_path %}
                 <pre id="train-log" class="bg-black text-success p-2 rounded" style="max-height:300px;overflow:auto;font-size:12px;">{{ log_content }}</pre>
@@ -126,12 +149,8 @@
                                     if (evEl && info.eval_mel !== null && info.eval_mel !== undefined) {
                                         evEl.textContent = '验证 mel: ' + info.eval_mel + '（step ' + (info.eval_step || 0) + '，与训练 mel 对比可判断过拟合）';
                                     }
-                                    if (window.lossChartInst && info.loss_data && info.loss_data.length) {
-                                        var ch = window.lossChartInst;
-                                        ch.data.labels = info.loss_data.map(function (_, i) { return i; });
-                                        ch.data.datasets[0].data = info.loss_data.map(function (d) { return d.g; });
-                                        ch.data.datasets[1].data = info.loss_data.map(function (d) { return d.d; });
-                                        ch.update();
+                                    if (typeof ensureLossChart === 'function') {
+                                        ensureLossChart(info.loss_data);
                                     }
                                 })
                                 .catch(function () {});
