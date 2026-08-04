@@ -3,6 +3,8 @@
 独立部署的 so-vits-svc **推理 + 训练** Web 服务器，支持多用户登录、模型管理、
 推理配置、任务队列、一键部署。
 
+**中文 · [English](README_en.md)**
+
 ##  许可证
 
 本项目是 [so-vits-svc](https://github.com/svc-develop-team/so-vits-svc)

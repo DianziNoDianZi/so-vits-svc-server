@@ -52,6 +52,7 @@ class Task(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     config_id = db.Column(db.Integer, db.ForeignKey('inference_config.id'), nullable=False)
+    params_json = db.Column(db.Text, nullable=True)  # 本次推理合并后的参数（覆盖配置默认值）
     status = db.Column(db.String(20), default='pending')
     progress_msg = db.Column(db.String(500), default='')
     audio_filename = db.Column(db.String(500), nullable=False)

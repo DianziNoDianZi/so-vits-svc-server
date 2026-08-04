@@ -10,6 +10,7 @@ import uuid
 import secrets
 import string
 import queue as queue_module
+import multiprocessing as mp_module
 import sqlalchemy as sa
 import threading
 import time
@@ -52,6 +53,10 @@ def migrate_db():
     for col, typ in train_cols:
         if col not in cols:
             db.session.execute(sa.text(f'ALTER TABLE training_task ADD COLUMN {col} {typ}'))
+    # migration for inference task (覆盖参数)
+    tcols = [c['name'] for c in inspector.get_columns('task')]
+    if 'params_json' not in tcols:
+        db.session.execute(sa.text('ALTER TABLE task ADD COLUMN params_json TEXT'))
     # migration for user table
     ucols = [c['name'] for c in inspector.get_columns('user')]
     user_cols = [('email', 'VARCHAR(200)'), ('email_notify', 'BOOLEAN'),
@@ -644,6 +649,61 @@ def settings():
     return render_template('settings.html', **_settings_context())
 
 
+@app.route('/update', methods=['POST'])
+@login_required
+def update_server():
+    """一键更新：git pull + 优雅等待任务结束后重启服务。"""
+    repo = request.form.get('repo_url', '').strip()
+    import subprocess as _sp
+    output = []
+    try:
+        if repo:
+            r = _sp.run(['git', 'pull', repo, 'master'], cwd=PROJECT_DIR,
+                        capture_output=True, text=True, timeout=180)
+        else:
+            r = _sp.run(['git', 'pull'], cwd=PROJECT_DIR,
+                        capture_output=True, text=True, timeout=180)
+        output.append(r.stdout[-1500:])
+        if r.stderr:
+            output.append(r.stderr[-800:])
+    except Exception as e:
+        output.append(f'git pull 失败: {e}')
+
+    running = (TrainingTask.query.filter_by(status='running').count()
+               + Task.query.filter_by(status='running').count())
+
+    def _do_restart():
+        time.sleep(5)
+        if os.name == 'nt':
+            return  # Windows 无 systemctl，提示手动重启
+        try:
+            _sp.Popen(['systemctl', 'restart', 'ssvc'],
+                      stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        except Exception:
+            pass
+
+    def _wait_and_restart():
+        while True:
+            with app.app_context():
+                n = (TrainingTask.query.filter_by(status='running').count()
+                     + Task.query.filter_by(status='running').count())
+            if n == 0:
+                break
+            time.sleep(10)
+        _do_restart()
+
+    if running > 0:
+        threading.Thread(target=_wait_and_restart, daemon=True).start()
+        flash(f'更新完成，等待 {running} 个运行中任务结束后自动重启', 'success')
+    else:
+        threading.Thread(target=_do_restart, daemon=True).start()
+        flash('更新完成，5 秒后自动重启服务', 'success')
+    if os.name == 'nt':
+        flash('当前为 Windows 环境，无法自动重启，请手动重启服务', 'warning')
+    flash('git pull 输出：\n' + '\n'.join(output)[-1200:], 'info')
+    return redirect(url_for('settings'))
+
+
 @app.route('/logout')
 @login_required
 def logout():
@@ -957,6 +1017,12 @@ task_worker_started = False
 task_processes = {}  # task_id -> subprocess.Popen
 task_processes_lock = threading.Lock()
 
+# 推理常驻 daemon（LRU 模型缓存）
+inference_q = None
+inference_done_q = None
+inference_daemon_proc = None
+INFERENCE_MODEL_CACHE = int(os.environ.get('INFERENCE_MODEL_CACHE', '3') or 3)
+
 
 def _stream_lines(stream):
     """把子进程输出按 \r 或 \n 切分成独立行，兼容 tqdm 进度条输出。"""
@@ -1013,7 +1079,10 @@ def task_worker():
 
                 cfg_obj = db.session.get(InferenceConfig, task.config_id)
                 model = db.session.get(Model, cfg_obj.model_id)
-                params = json.loads(cfg_obj.params_json) if cfg_obj.params_json else DEFAULT_PARAMS.copy()
+                if task.params_json:
+                    params = json.loads(task.params_json)
+                else:
+                    params = json.loads(cfg_obj.params_json) if cfg_obj.params_json else DEFAULT_PARAMS.copy()
                 # 模型没有检索索引时强制关闭 cluster_ratio，避免推理报错
                 if params.get('cluster_ratio', 0) > 0 and not model.cluster_path:
                     params['cluster_ratio'] = 0
@@ -1037,131 +1106,86 @@ def task_worker():
                 full_diff = os.path.join(app.config['UPLOAD_FOLDER'], 'models', model.diff_model_path) if model.diff_model_path else 'none'
                 full_diff_config = os.path.join(app.config['UPLOAD_FOLDER'], 'configs', model.diff_config_path) if model.diff_config_path else 'none'
                 full_cluster = os.path.join(app.config['UPLOAD_FOLDER'], 'models', model.cluster_path) if model.cluster_path else 'none'
-                params_json = json.dumps(params, ensure_ascii=False)
-
-                import subprocess
-                proc_env = {
-                    **os.environ, 'PYTHONPATH': PROJECT_DIR,
-                    'SSVC_DEVICE': task.device_pref or 'auto',
-                    'SSVC_MEMORY_LIMIT': str(task.memory_limit or 0),
-                    'TORCH_HOME': os.path.join(PROJECT_DIR, 'pretrain'),
-                    'PYTHONUNBUFFERED': '1',
+                # 投递到常驻推理 daemon（LRU 模型缓存）
+                if inference_q is None:
+                    raise RuntimeError('推理 daemon 未启动')
+                payload = {
+                    'model_path': full_model,
+                    'config_path': full_config,
+                    'audio_path': audio_path,
+                    'result_path': result_path,
+                    'k_step': k_step,
+                    'params': params,
+                    'diff_path': full_diff,
+                    'diff_config_path': full_diff_config,
+                    'cluster_path': full_cluster,
+                    'device': task.device_pref or 'auto',
                 }
-                proc = subprocess.Popen(
-                    [python, '-X', 'utf8', worker,
-                     full_model, full_config, audio_path, result_path,
-                     str(k_step), params_json, full_diff, full_diff_config, full_cluster],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    env=proc_env,
-                    cwd=PROJECT_DIR,
-                )
-                with task_processes_lock:
-                    task_processes[task_id] = proc
+                inference_q.put((task_id, payload))
 
-                # 预估算总段数
+                # 轮询进度文件 + 等待完成通知
+                prog_path = result_path + '.prog'
                 import soundfile as sf
                 try:
                     audio_info = sf.info(audio_path)
-                    dur_seconds = audio_info.duration
-                    avg_segment = 10
-                    estimated_total = max(int(dur_seconds / avg_segment) + 1, 1)
+                    estimated_total = max(int(audio_info.duration / 10) + 1, 1)
                 except Exception:
                     estimated_total = 5
-
                 segments_done = 0
-                segment_times = []
-                mem_limit_gb = task.memory_limit or 0
-                mem_check_counter = 0
+                tail_lines = deque(maxlen=100)
                 started_at = time.time()
                 task_timeout = int(os.environ.get('INFERENCE_TASK_TIMEOUT', str(6 * 3600)))
-                tail_lines = deque(maxlen=100)
+                result_ok = False
+                result_err = None
+                while True:
+                    # 超时保护
+                    if task_timeout > 0 and time.time() - started_at > task_timeout:
+                        result_err = f'推理超过 {task_timeout // 3600}h 仍未完成，已终止'
+                        break
+                    # 读取 daemon 进度文件（段级进度）
+                    try:
+                        with open(prog_path, 'r', encoding='utf-8', errors='replace') as pf:
+                            prog_text = pf.read()
+                        for line in prog_text.splitlines():
+                            text = line.strip()
+                            if not text:
+                                continue
+                            tail_lines.append(text)
+                            if '#=====segment start' in text:
+                                segments_done += 1
+                                if segments_done > estimated_total:
+                                    estimated_total = segments_done + 2
+                                if 'sample time step:' not in text:
+                                    base_pct = min(int((segments_done - 1) * 100 / max(estimated_total, 1)), 99)
+                                    _update_progress(task, f'推理中 ({base_pct}%) — 第 {segments_done}/{estimated_total} 段')
+                            if 'sample time step:' in text and '%|' in text:
+                                m = re.search(r'(\d+)%\|', text)
+                                if m:
+                                    diff_pct = int(m.group(1))
+                                    base_pct = (segments_done - 1) * 100 / max(estimated_total, 1)
+                                    total_pct = min(int(base_pct + diff_pct / max(estimated_total, 1)), 99)
+                                    _update_progress(task, f'推理中 ({total_pct}%) — 第 {segments_done}/{estimated_total} 段')
+                    except OSError:
+                        pass
+                    # 完成通知
+                    try:
+                        tid, ok, err = inference_done_q.get_nowait()
+                    except Exception:
+                        tid, ok, err = None, False, None
+                    if tid is not None:
+                        if tid == task_id:
+                            result_ok, result_err = ok, err
+                            break
+                    time.sleep(1)
 
-                log_path = os.path.join(app.config['UPLOAD_FOLDER'], 'results', f'error_{task_id}.log')
-                log_fh = None
-                try:
-                    log_fh = open(log_path, 'w', encoding='utf-8')
-                except Exception:
-                    log_fh = None
-
-                try:
-                    for raw in _stream_lines(proc.stdout):
-                        text = raw.decode('utf-8', errors='replace').strip()
-                        if not text:
-                            continue
-                        tail_lines.append(text)
-                        if log_fh:
-                            try:
-                                log_fh.write(text + '\n')
-                                log_fh.flush()
-                            except Exception:
-                                pass
-                        now = time.time()
-
-                        # 内存限制监控（每 5 行检查一次）
-                        if mem_limit_gb > 0:
-                            mem_check_counter += 1
-                            if mem_check_counter % 5 == 0:
-                                try:
-                                    import psutil as _ps
-                                    _wp = _ps.Process(proc.pid)
-                                    _mm = _wp.memory_info().rss / (1024 * 1024 * 1024)
-                                    if _mm > mem_limit_gb:
-                                        proc.kill()
-                                        raise MemoryError(f'超过内存限制 {mem_limit_gb}GB (实际 {_mm:.1f}GB)')
-                                except ImportError:
-                                    pass
-                                except _ps.NoSuchProcess:
-                                    pass
-
-                        # 超时保护
-                        if task_timeout > 0 and now - started_at > task_timeout:
-                            proc.kill()
-                            raise TimeoutError(f'推理超过 {task_timeout // 3600}h 仍未完成，已终止')
-
-                        if '#=====segment start' in text:
-                            segments_done += 1
-                            segment_times.append(now)
-                            if segments_done > estimated_total:
-                                estimated_total = segments_done + 2
-
-                        # 普通推理（无扩散采样）：段级进度
-                        if '#=====segment start' in text and 'sample time step:' not in text:
-                            base_pct = min(int((segments_done - 1) * 100 / max(estimated_total, 1)), 99)
-                            _update_progress(task, f'推理中 ({base_pct}%) — 第 {segments_done}/{estimated_total} 段')
-
-                        # 扩散采样进度（tqdm 已在 inference_worker 中改为逐行输出）
-                        if 'sample time step:' in text and '%|' in text:
-                            m = re.search(r'(\d+)%\|', text)
-                            if m:
-                                diff_pct = int(m.group(1))
-                                base_pct = (segments_done - 1) * 100 / max(estimated_total, 1)
-                                total_pct = min(int(base_pct + diff_pct / max(estimated_total, 1)), 99)
-                                eta = '...'
-                                if len(segment_times) >= 2:
-                                    avg_time = (segment_times[-1] - segment_times[0]) / max(len(segment_times) - 1, 1)
-                                    remaining_segments = estimated_total - segments_done + 1
-                                    eta_secs = int(avg_time * remaining_segments)
-                                    eta = f'{eta_secs // 60}m{eta_secs % 60}s' if eta_secs > 0 else '...'
-                                _update_progress(task, f'推理中 ({total_pct}%) — 第 {segments_done}/{estimated_total} 段 | ETA: {eta}')
-
-                    proc.wait()
-                finally:
-                    if log_fh:
-                        try:
-                            log_fh.close()
-                        except Exception:
-                            pass
-                    with task_processes_lock:
-                        task_processes.pop(task_id, None)
-
-                if proc.returncode == 0:
+                if result_ok:
                     task.result_filename = result_name
                     task.status = 'done'
                     task.progress_msg = '推理完成'
                 else:
                     task.status = 'failed'
-                    task.error_msg = '\n'.join(tail_lines)[-1000:]
-                    task.progress_msg = f'推理失败 (exit {proc.returncode})'
+                    task.error_msg = (result_err or '\n'.join(tail_lines))[-1000:]
+                    task.progress_msg = f'推理失败: {(result_err or "未知错误")[:60]}'
 
                 task.done_at = datetime.utcnow()
 
@@ -1189,7 +1213,30 @@ def task_worker():
 
 
 def ensure_worker():
-    global task_worker_started
+    global task_worker_started, inference_q, inference_done_q, inference_daemon_proc
+    if inference_q is None:
+        try:
+            inference_q = mp_module.Queue()
+            inference_done_q = mp_module.Queue()
+        except Exception as e:
+            print(f'[ensure_worker] 推理队列创建失败: {e}', flush=True)
+            inference_q = None
+            inference_done_q = None
+    if inference_q is not None and (inference_daemon_proc is None or not inference_daemon_proc.is_alive()):
+        try:
+            from inference_daemon import main as _daemon_main
+            inference_daemon_proc = mp_module.Process(
+                target=_daemon_main,
+                args=(inference_q, inference_done_q, INFERENCE_MODEL_CACHE),
+                daemon=True,
+                name='inference-daemon',
+            )
+            inference_daemon_proc.start()
+            print(f'[ensure_worker] 推理 daemon 已启动 (pid={inference_daemon_proc.pid}, cache={INFERENCE_MODEL_CACHE})', flush=True)
+        except Exception as e:
+            print(f'[ensure_worker] 推理 daemon 启动失败: {e}', flush=True)
+            import traceback as _tb
+            _tb.print_exc()
     if not task_worker_started:
         task_worker_started = True
         t = threading.Thread(target=task_worker, daemon=True)
@@ -1233,12 +1280,41 @@ def inference():
         # Save audio
         audio_filename = save_uploaded(audio_file, 'audio')
 
+        # 合并参数：配置默认值 + 推理页临时覆盖
+        try:
+            cfg_params = json.loads(cfg_obj.params_json) if cfg_obj.params_json else DEFAULT_PARAMS.copy()
+        except Exception:
+            cfg_params = DEFAULT_PARAMS.copy()
+        override = {}
+        for key, default in DEFAULT_PARAMS.items():
+            if key in ('device', 'memory_limit'):
+                continue
+            val = request.form.get(key)
+            if val is None:
+                continue
+            if isinstance(default, bool):
+                override[key] = val == 'on' or val == '1'
+            elif isinstance(default, int):
+                try:
+                    override[key] = int(val)
+                except (ValueError, TypeError):
+                    pass
+            elif isinstance(default, float):
+                try:
+                    override[key] = float(val)
+                except (ValueError, TypeError):
+                    pass
+            else:
+                override[key] = val
+        cfg_params.update(override)
+
         # Create task
         ensure_worker()
         task = Task(
             user_id=current_user.id,
             config_id=config_id,
             audio_filename=audio_filename,
+            params_json=json.dumps(cfg_params, ensure_ascii=False),
             device_pref=current_user.device_pref or 'auto',
             memory_limit=current_user.memory_limit or 0,
             status='pending',
@@ -1250,7 +1326,34 @@ def inference():
         flash('推理任务已提交，请在任务列表中查看进度', 'success')
         return redirect(url_for('task_list'))
 
-    return render_template('inference.html', configs=configs)
+    # 最近 6 次推理结果（用于会话试听历史）
+    recent = (Task.query.filter_by(user_id=current_user.id, status='done')
+              .order_by(Task.created_at.desc()).limit(6).all())
+    recent_items = []
+    for t in recent:
+        if not t.result_filename:
+            continue
+        try:
+            t_params = json.loads(t.params_json or '{}')
+        except Exception:
+            t_params = {}
+        recent_items.append({
+            'id': t.id,
+            'result': t.result_filename,
+            'audio': t.audio_filename,
+            'params': t_params,
+            'created': t.done_at or t.created_at,
+        })
+    config_items = []
+    for c in configs:
+        try:
+            c_params = json.loads(c.params_json or '{}')
+        except Exception:
+            c_params = {}
+        config_items.append({'id': c.id, 'name': c.name, 'model': c.model.name,
+                             'params': c_params,
+                             'has_cluster': bool(c.model.cluster_path)})
+    return render_template('inference.html', configs=config_items, recent=recent_items)
 
 
 @app.route('/tasks')
@@ -2224,7 +2327,21 @@ def _recover_tasks():
             task_queue.put(t.id)
 
 
+def _stop_inference_daemon():
+    """主进程退出时通知推理 daemon 结束，避免孤儿进程。"""
+    global inference_q, inference_daemon_proc
+    try:
+        if inference_q is not None:
+            inference_q.put(None)
+        if inference_daemon_proc is not None:
+            inference_daemon_proc.join(timeout=3)
+    except Exception:
+        pass
+
+
 if __name__ == '__main__':
+    import atexit
+    atexit.register(_stop_inference_daemon)
     ensure_train_worker()
     ensure_worker()
     _recover_tasks()

@@ -15,6 +15,9 @@
     animation: spin 1s linear infinite;
 }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+.hist-card { font-size: 12px; }
+.hist-card .param-line { color: #9aa7cc; word-break: break-all; }
+.hist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
 </style>
 
 <div id="loading-overlay">
@@ -31,7 +34,40 @@ document.querySelector('form')?.addEventListener('submit', function() {
         var s = Math.floor((Date.now() - start) / 1000);
         document.getElementById('elapsed').textContent = '已耗时: ' + s + 's';
     }, 500);
-    /* 提交后跳转到任务列表页查看实时进度 */
+});
+
+function fillParams(select) {
+    var opt = select.options[select.selectedIndex];
+    if (!opt || !opt.dataset.params) return;
+    var p = JSON.parse(opt.dataset.params);
+    function setv(name, val) {
+        var el = document.querySelector('[name="' + name + '"]');
+        if (!el) return;
+        if (el.type === 'checkbox') { el.checked = !!val; }
+        else { el.value = val === undefined || val === null ? '' : val; }
+    }
+    setv('f0_predictor', p.f0_predictor || 'rmvpe');
+    setv('k_step', p.k_step !== undefined ? p.k_step : 100);
+    setv('vc_transform', p.vc_transform !== undefined ? p.vc_transform : 0);
+    setv('cluster_ratio', p.cluster_ratio !== undefined ? p.cluster_ratio : 0.2);
+    setv('slice_db', p.slice_db !== undefined ? p.slice_db : -40);
+    setv('noise_scale', p.noise_scale !== undefined ? p.noise_scale : 0.4);
+    setv('pad_seconds', p.pad_seconds !== undefined ? p.pad_seconds : 0.5);
+    setv('auto_f0', !!p.auto_f0);
+    setv('enhancer', !!p.enhancer);
+    setv('second_encoding', !!p.second_encoding);
+    setv('loudness_envelope', p.loudness_envelope !== undefined ? p.loudness_envelope : 0);
+    setv('output_format', p.output_format || 'wav');
+    // 检索索引：无索引时禁用 cluster_ratio
+    var cr = document.querySelector('input[name="cluster_ratio"]');
+    if (cr) { cr.disabled = opt.dataset.hasCluster !== '1'; if (cr.disabled) cr.value = '0'; }
+}
+document.addEventListener('DOMContentLoaded', function() {
+    var sel = document.querySelector('select[name="config_id"]');
+    if (sel) {
+        sel.addEventListener('change', function() { fillParams(this); });
+        if (sel.value) fillParams(sel);
+    }
 });
 </script>
 
@@ -53,11 +89,11 @@ document.querySelector('form')?.addEventListener('submit', function() {
                 <form method="POST" enctype="multipart/form-data">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
-                        <label class="form-label">推理配置</label>
+                        <label class="form-label">推理配置（默认值）</label>
                         <select name="config_id" class="form-select bg-dark text-light border-secondary" required>
                             <option value="">— 选择配置 —</option>
                             {% for c in configs %}
-                            <option value="{{ c.id }}">{{ c.name }} ({{ c.model.name }})</option>
+                            <option value="{{ c.id }}" data-params='{{ c.params|tojson }}' data-has-cluster="{{ '1' if c.has_cluster else '0' }}">{{ c.name }} ({{ c.model }})</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -66,28 +102,135 @@ document.querySelector('form')?.addEventListener('submit', function() {
                         <input type="file" name="audio_file" class="form-control bg-dark text-light border-secondary"
                                accept=".wav,.mp3,.flac,.m4a" required>
                     </div>
+
+                    <div class="row">
+                        <div class="col-6 mb-2">
+                            <label class="form-label" style="font-size:13px;">F0 预测器</label>
+                            <select name="f0_predictor" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                <option value="rmvpe">rmvpe (推荐)</option>
+                                <option value="pm">pm (快速)</option>
+                                <option value="harvest">harvest</option>
+                                <option value="crepe">crepe (准但慢)</option>
+                                <option value="dio">dio</option>
+                                <option value="fcpe">fcpe</option>
+                            </select>
+                        </div>
+                        <div class="col-6 mb-2">
+                            <label class="form-label" style="font-size:13px;">变调 (半音)</label>
+                            <input type="number" name="vc_transform" class="form-control form-control-sm bg-dark text-light border-secondary" value="0" min="-24" max="24">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-2">
+                            <label class="form-label" style="font-size:13px;">浅扩散 k_step</label>
+                            <input type="number" name="k_step" class="form-control form-control-sm bg-dark text-light border-secondary" value="100" min="0" max="1000">
+                        </div>
+                        <div class="col-6 mb-2">
+                            <label class="form-label" style="font-size:13px;">噪声</label>
+                            <input type="number" name="noise_scale" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.4" min="0" max="1" step="0.1">
+                        </div>
+                    </div>
+
+                    <div class="mb-2">
+                        <a data-bs-toggle="collapse" href="#infAdvParams" role="button" class="text-secondary" style="font-size:13px;">⚙ 高级参数</a>
+                    </div>
+                    <div class="collapse" id="infAdvParams">
+                        <div class="card card-body bg-dark border-secondary p-2 mb-3">
+                            <div class="row">
+                                <div class="col-6 mb-2">
+                                    <label class="form-label" style="font-size:13px;">聚类比例</label>
+                                    <input type="number" name="cluster_ratio" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.2" min="0" max="1" step="0.1" title="需要模型挂载检索索引">
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <label class="form-label" style="font-size:13px;">切片阈值 (dB)</label>
+                                    <input type="number" name="slice_db" class="form-control form-control-sm bg-dark text-light border-secondary" value="-40" min="-60" max="0">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-6 mb-2">
+                                    <label class="form-label" style="font-size:13px;">Pad (秒)</label>
+                                    <input type="number" name="pad_seconds" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.5" min="0" max="5" step="0.1">
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <label class="form-label" style="font-size:13px;">响度包络</label>
+                                    <input type="number" name="loudness_envelope" class="form-control form-control-sm bg-dark text-light border-secondary" value="0" min="0" max="1" step="0.1">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-4 mb-2">
+                                    <div class="form-check">
+                                        <input type="checkbox" name="auto_f0" class="form-check-input" id="inf_auto_f0">
+                                        <label class="form-check-label" for="inf_auto_f0" style="font-size:12px;">自动 F0</label>
+                                    </div>
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <div class="form-check">
+                                        <input type="checkbox" name="enhancer" class="form-check-input" id="inf_enhancer">
+                                        <label class="form-check-label" for="inf_enhancer" style="font-size:12px;">NSF 增强</label>
+                                    </div>
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <div class="form-check">
+                                        <input type="checkbox" name="second_encoding" class="form-check-input" id="inf_second">
+                                        <label class="form-check-label" for="inf_second" style="font-size:12px;">二次编码</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-6 mb-2">
+                                    <label class="form-label" style="font-size:13px;">输出格式</label>
+                                    <select name="output_format" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                        <option value="wav">WAV</option>
+                                        <option value="mp3">MP3</option>
+                                        <option value="flac">FLAC</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <button type="submit" class="btn btn-primary w-100">开始推理</button>
+                    <small class="text-secondary d-block mt-2 text-center">参数基于所选配置默认值，可临时调整</small>
                 </form>
             </div>
         </div>
     </div>
     <div class="col-md-7">
-        <div class="card bg-dark border-secondary">
+        <div class="card bg-dark border-secondary mb-3">
             <div class="card-body">
-                <h5 class="card-title">结果</h5>
+                <h5 class="card-title">本次结果</h5>
                 {% if result_file %}
-                <div class="text-center py-4">
+                <div class="text-center py-3">
                     <p class="text-success mb-3">✅ 推理完成</p>
                     <audio controls class="w-100 mb-3">
                         <source src="{{ url_for('download_result', filename=result_file) }}">
                     </audio>
-                    <br>
-                    <a href="{{ url_for('download_result', filename=result_file) }}" class="btn btn-success">
-                        ⬇ 下载文件
-                    </a>
+                    <a href="{{ url_for('download_result', filename=result_file) }}" class="btn btn-success">⬇ 下载文件</a>
                 </div>
                 {% else %}
                 <p class="text-secondary text-center py-4">选择配置和音频文件后开始推理</p>
+                {% endif %}
+            </div>
+        </div>
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h5 class="card-title">试听历史 <small class="text-secondary">（最近 {{ recent|length }} 次，可并排对比）</small></h5>
+                {% if recent %}
+                <div class="hist-grid">
+                    {% for r in recent %}
+                    <div class="card bg-dark border-secondary hist-card">
+                        <div class="card-body p-2">
+                            <audio controls preload="none" class="w-100 mb-1" style="height:36px;">
+                                <source src="{{ url_for('download_result', filename=r.result) }}">
+                            </audio>
+                            <div class="param-line">F0: {{ r.params.get('f0_predictor', '?') }} · k_step: {{ r.params.get('k_step', '?') }} · 变调: {{ r.params.get('vc_transform', 0) }} · noise: {{ r.params.get('noise_scale', '?') }}</div>
+                            <div class="param-line">检索: {{ r.params.get('cluster_ratio', 0) }} · 增强: {{ '开' if r.params.get('enhancer') else '关' }} · {{ r.params.get('output_format', 'wav') }}</div>
+                            <div class="text-secondary" style="font-size:11px;">{{ r.created.strftime('%m-%d %H:%M') }}</div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-secondary text-center py-3">还没有完成过的推理结果</p>
                 {% endif %}
             </div>
         </div>

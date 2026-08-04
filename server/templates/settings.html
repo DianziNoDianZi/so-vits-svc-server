@@ -179,6 +179,20 @@
                 </form>
             </div>
         </div>
+        <div class="card bg-dark border-secondary mb-3">
+            <div class="card-body">
+                <h3 class="card-title text-center mb-3">系统更新</h3>
+                <form action="{{ url_for('update_server') }}" method="POST" onsubmit="return confirm('确认检查并拉取最新代码？更新后服务将自动重启');">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-2">
+                        <label class="form-label" style="font-size:13px;">仓库地址（留空用默认 remote）</label>
+                        <input type="text" name="repo_url" class="form-control bg-dark text-light border-secondary" placeholder="如 origin / gitee / https://gitee.com/...">
+                    </div>
+                    <button type="submit" class="btn btn-outline-primary w-100">检查更新</button>
+                    <small class="text-secondary d-block mt-2 text-center">git pull 后等待运行中任务结束，自动 systemctl restart ssvc</small>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}

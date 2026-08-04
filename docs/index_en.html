@@ -1,10 +1,10 @@
-﻿<!DOCTYPE html>
-<html lang="zh-CN">
+<!DOCTYPE html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="So-VITS-SVC 服务器：浏览器里训练、续训、推理换声的 Web 界面，支持 CPU/GPU 一键部署。">
-<title>So-VITS-SVC Server — 浏览器里训完再换声</title>
+<meta name="description" content="So-VITS-SVC Server: a web platform to train, resume and run voice conversion inference in the browser, with one-click CPU/GPU deployment.">
+<title>So-VITS-SVC Server — Train and convert voices in your browser</title>
 <style>
   :root {
     --bg: #0b1020;
@@ -23,14 +23,13 @@
   body {
     background: radial-gradient(1200px 600px at 80% -10%, #1c2b5c 0%, var(--bg) 55%) fixed;
     color: var(--text);
-    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     line-height: 1.7;
   }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
 
-  /* Nav */
   nav {
     position: sticky; top: 0; z-index: 10;
     backdrop-filter: blur(8px);
@@ -44,19 +43,18 @@
   nav .links a { color: var(--muted); }
   nav .links a:hover { color: var(--text); text-decoration: none; }
 
-  /* Hero */
   header.hero { padding: 84px 0 64px; text-align: center; }
   .hero .badge {
     display: inline-block; padding: 5px 14px; border-radius: 999px;
     background: rgba(94, 140, 255, 0.14); border: 1px solid #2d4378;
     color: var(--accent); font-size: 13px; margin-bottom: 22px;
   }
-  .hero h1 { font-size: clamp(30px, 5vw, 48px); font-weight: 800; letter-spacing: 0.5px; }
+  .hero h1 { font-size: clamp(30px, 5vw, 46px); font-weight: 800; letter-spacing: 0.5px; }
   .hero h1 .grad {
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
-  .hero p.sub { max-width: 680px; margin: 18px auto 0; color: var(--muted); font-size: 17px; }
+  .hero p.sub { max-width: 720px; margin: 18px auto 0; color: var(--muted); font-size: 17px; }
   .hero .cta { margin-top: 32px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
   .btn {
     display: inline-block; padding: 11px 26px; border-radius: 10px; font-size: 15px; font-weight: 600;
@@ -66,17 +64,14 @@
   .btn.primary { background: linear-gradient(90deg, var(--accent), #6f7bff); color: #fff; box-shadow: 0 6px 22px rgba(91, 140, 255, 0.35); }
   .btn.ghost { border: 1px solid var(--border); color: var(--text); background: rgba(255,255,255,0.03); }
   .hero .meta { margin-top: 26px; color: var(--muted); font-size: 13px; display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
-  .hero .meta b { color: var(--text); font-weight: 600; }
 
-  /* Sections */
   section { padding: 60px 0; }
   section h2 { font-size: 26px; font-weight: 700; text-align: center; }
   section h2 .grad {
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
-  section .lead { text-align: center; color: var(--muted); max-width: 640px; margin: 10px auto 42px; }
-
+  section .lead { text-align: center; color: var(--muted); max-width: 680px; margin: 10px auto 42px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 18px; }
   .card {
     background: linear-gradient(180deg, var(--card), rgba(21,31,61,0.6));
@@ -84,60 +79,39 @@
     padding: 24px 22px; transition: border-color 0.15s ease, transform 0.15s ease;
   }
   .card:hover { border-color: #3c5188; transform: translateY(-2px); }
-  .card .icon { font-size: 24px; margin-bottom: 12px; }
   .card h3 { font-size: 16px; margin-bottom: 8px; }
-.card p { font-size: 14px; color: var(--muted); }
+  .card p { font-size: 14px; color: var(--muted); }
 
-/* Demo player */
-.demo-panel {
-  background: linear-gradient(180deg, var(--card), rgba(21,31,61,0.6));
-  border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 22px; max-width: 760px; margin: 0 auto;
-}
-.demo-master {
-  display: flex; align-items: center; gap: 14px;
-  padding-bottom: 16px; margin-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-}
-.demo-play {
-  width: 46px; height: 46px; border-radius: 50%; border: none; cursor: pointer;
-  background: linear-gradient(135deg, var(--accent), #6f7bff); color: #fff;
-  font-size: 17px; flex: none; transition: transform 0.12s ease;
-}
-.demo-play:disabled { background: #2b3a6b; color: #7d8ab3; cursor: wait; }
-.demo-play:hover { transform: scale(1.05); }
-.demo-master progress {
-  flex: 1; height: 6px; border: none; border-radius: 3px; cursor: pointer;
-  background: #26335c;
-}
-.demo-master progress::-webkit-progress-bar { background: #26335c; border-radius: 3px; }
-.demo-master progress::-webkit-progress-value { background: var(--accent); border-radius: 3px; }
-.demo-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
-.demo-hint { font-size: 12px; color: var(--muted); margin: 10px 0 0; text-align: center; }
-
-.demo-track {
-  display: flex; align-items: center; gap: 12px; padding: 9px 2px;
-}
-.demo-track + .demo-track { border-top: 1px solid rgba(37,51,95,0.6); }
-.demo-track .name { width: 100px; font-size: 14px; font-weight: 600; flex: none; }
-.demo-track .sub { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 1px; }
-.demo-mute {
-  width: 34px; height: 30px; border-radius: 8px; border: 1px solid var(--border);
-  background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; flex: none;
-}
-.demo-mute:hover { border-color: #3c5188; color: var(--text); }
-.demo-track.muted .demo-mute { border-color: var(--accent); color: var(--accent); }
-.demo-track.muted .name { color: var(--muted); }
-.demo-vol { flex: 1; accent-color: var(--accent); cursor: pointer; }
-.demo-vol-pct { width: 44px; font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; flex: none; }
-.demo-disclaimer { max-width: 760px; margin: 14px auto 0; font-size: 12px; color: #6b789e; text-align: center; }
-
-/* Workflow */
-.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; counter-reset: step; }
-  .step {
-    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 20px 18px; position: relative;
+  .demo-panel {
+    background: linear-gradient(180deg, var(--card), rgba(21,31,61,0.6));
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 22px; max-width: 760px; margin: 0 auto;
   }
+  .demo-master { display: flex; align-items: center; gap: 14px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+  .demo-play {
+    width: 46px; height: 46px; border-radius: 50%; border: none; cursor: pointer;
+    background: linear-gradient(135deg, var(--accent), #6f7bff); color: #fff;
+    font-size: 17px; flex: none; transition: transform 0.12s ease;
+  }
+  .demo-play:disabled { background: #2b3a6b; color: #7d8ab3; cursor: wait; }
+  .demo-play:hover { transform: scale(1.05); }
+  .demo-master progress { flex: 1; height: 6px; border: none; border-radius: 3px; background: #26335c; }
+  .demo-master progress::-webkit-progress-bar { background: #26335c; border-radius: 3px; }
+  .demo-master progress::-webkit-progress-value { background: var(--accent); border-radius: 3px; }
+  .demo-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+  .demo-hint { font-size: 12px; color: var(--muted); margin: 10px 0 0; text-align: center; }
+  .demo-track { display: flex; align-items: center; gap: 12px; padding: 9px 2px; }
+  .demo-track + .demo-track { border-top: 1px solid rgba(37,51,95,0.6); }
+  .demo-track .name { width: 150px; font-size: 14px; font-weight: 600; flex: none; }
+  .demo-track .sub { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 1px; }
+  .demo-mute { width: 34px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; flex: none; }
+  .demo-track.muted .demo-mute { border-color: var(--accent); color: var(--accent); }
+  .demo-vol { flex: 1; accent-color: var(--accent); cursor: pointer; }
+  .demo-vol-pct { width: 44px; font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; flex: none; }
+  .demo-disclaimer { max-width: 760px; margin: 14px auto 0; font-size: 12px; color: #6b789e; text-align: center; }
+
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; counter-reset: step; }
+  .step { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 18px; position: relative; }
   .step::before {
     counter-increment: step; content: counter(step);
     position: absolute; top: 14px; right: 16px;
@@ -146,7 +120,6 @@
   .step h4 { font-size: 15px; margin-bottom: 6px; }
   .step p { font-size: 13px; color: var(--muted); }
 
-  /* Tabs (quickstart) */
   .tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
   .tab-btn {
     padding: 8px 18px; border-radius: 8px; border: 1px solid var(--border);
@@ -163,7 +136,6 @@
   }
   pre .cm { color: #5d6f9c; }
 
-  /* Table */
   table { width: 100%; border-collapse: collapse; font-size: 14px; background: var(--card); border-radius: var(--radius); overflow: hidden; }
   th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
   th { background: rgba(91,140,255,0.10); color: var(--text); font-weight: 600; }
@@ -171,7 +143,6 @@
   tr:last-child td { border-bottom: none; }
   .table-note { margin-top: 12px; font-size: 13px; color: var(--muted); }
 
-  /* License */
   .license { background: linear-gradient(180deg, var(--card), rgba(21,31,61,0.5)); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; }
   .license h3 { margin-bottom: 10px; }
   .license p { font-size: 14px; color: var(--muted); margin-bottom: 8px; }
@@ -192,151 +163,148 @@
   <div class="wrap">
     <span class="brand"><span class="dot"></span>So-VITS-SVC Server</span>
     <div class="links">
-      <a href="#demo">效果试听</a>
-      <a href="#features">功能</a>
-      <a href="#workflow">使用流程</a>
-      <a href="#quickstart">快速开始</a>
-      <a href="#models">预训练模型</a>
-      <a href="#license">开源协议</a>
-      <a href="index_en.html" style="color:#5b8cff;">English</a>
+      <a href="#demo">Demo</a>
+      <a href="#features">Features</a>
+      <a href="#workflow">Workflow</a>
+      <a href="#quickstart">Quick Start</a>
+      <a href="#models">Models</a>
+      <a href="#license">License</a>
+      <a href="index.html" style="color:#5b8cff;">中文</a>
     </div>
   </div>
 </nav>
 
 <header class="hero">
   <div class="wrap">
-    <span class="badge">AGPL-3.0 · so-vits-svc 派生 · 推理 + 训练</span>
-    <h1>一个浏览器里能训完、<br>能换声的<span class="grad"> So-VITS-SVC 服务器</span></h1>
-    <p class="sub">上传数据集就能排队训练，随时停、随时续，看 Loss 曲线判断训没训坏；
-    训完直接上传音频换声。NVIDIA / AMD / 纯 CPU 都有对应的一键部署脚本。</p>
+    <span class="badge">AGPL-3.0 · So-VITS-SVC derivative · Training + Inference</span>
+    <h1>A So-VITS-SVC server you can<br><span class="grad">train and convert with, in a browser</span></h1>
+    <p class="sub">Upload a dataset and queue training, stop and resume anytime, watch loss curves to see if it is overfitting; then upload audio and convert. One-click deploy scripts for NVIDIA, AMD, or CPU-only machines.</p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/DianziNoDianZi/so-vits-svc-server" target="_blank" rel="noopener">GitHub 仓库</a>
-      <a class="btn ghost" href="https://gitee.com/DianZiNoDianZi/so-vits-svc-inference" target="_blank" rel="noopener">Gitee 镜像</a>
+      <a class="btn primary" href="https://github.com/DianziNoDianZi/so-vits-svc-server" target="_blank" rel="noopener">GitHub</a>
+      <a class="btn ghost" href="https://gitee.com/DianZiNoDianZi/so-vits-svc-inference" target="_blank" rel="noopener">Gitee mirror</a>
     </div>
     <div class="meta">
-      <span>多用户登录</span><span>·</span><span>训练任务队列</span><span>·</span>
-      <span>实时 Loss 曲线</span><span>·</span><span>邮件通知</span>
+      <span>Multi-user login</span><span>·</span><span>Training queue</span><span>·</span>
+      <span>Live loss curves</span><span>·</span><span>Email notifications</span>
     </div>
   </div>
 </header>
 
 <section id="demo">
   <div class="wrap">
-    <h2>听听<span class="grad">效果</span></h2>
-    <p class="lead">同一段歌：原唱人声、模型换声后的人声、伴奏。三个轨道同步播放，可以各自调音量对比差别。</p>
+    <h2>Listen to the <span class="grad">results</span></h2>
+    <p class="lead">Same song, three tracks: original vocals, model-converted vocals and accompaniment. Tracks play in sync; use the volume sliders to compare.</p>
     <div class="demo-panel">
       <div class="demo-master">
-        <button class="demo-play" id="demoPlay" title="播放 / 暂停">▶</button>
+        <button class="demo-play" id="demoPlay" title="Play / Pause">▶</button>
         <progress id="demoProgress" max="1000" value="0"></progress>
         <span class="demo-time" id="demoTime">0:00 / 0:00</span>
       </div>
-
       <div class="demo-track" id="track-original">
-        <span class="name">原唱人声<span class="sub">Original</span></span>
-        <button class="demo-mute" title="静音">M</button>
+        <span class="name">Original vocals<span class="sub">Original</span></span>
+        <button class="demo-mute" title="Mute">M</button>
         <input type="range" class="demo-vol" min="0" max="100" value="100">
         <span class="demo-vol-pct">100%</span>
       </div>
       <div class="demo-track" id="track-converted">
-        <span class="name">换声后人声<span class="sub">Converted</span></span>
-        <button class="demo-mute" title="静音">M</button>
+        <span class="name">Converted vocals<span class="sub">Converted</span></span>
+        <button class="demo-mute" title="Mute">M</button>
         <input type="range" class="demo-vol" min="0" max="100" value="100">
         <span class="demo-vol-pct">100%</span>
       </div>
       <div class="demo-track" id="track-accompaniment">
-        <span class="name">伴奏<span class="sub">Accompaniment</span></span>
-        <button class="demo-mute" title="静音">M</button>
+        <span class="name">Accompaniment<span class="sub">Accompaniment</span></span>
+        <button class="demo-mute" title="Mute">M</button>
         <input type="range" class="demo-vol" min="0" max="100" value="100">
         <span class="demo-vol-pct">100%</span>
       </div>
-
-      <p class="demo-hint">拖动滑块调节每轨音量，点 M 单独静音。把伴奏调小，可以更清楚地对比原唱和换声。</p>
+      <p class="demo-hint">Adjust each track with the sliders, or press M to mute. Lower the accompaniment to compare the original and converted vocals more clearly.</p>
     </div>
-    <p class="demo-disclaimer">试听音频由 AI 模型对歌曲片段做声音转换生成，仅用于演示项目效果，版权归原版权方所有。</p>
+    <p class="demo-disclaimer">Demo audio was generated by an AI model converting a song segment, for demonstration only; copyright belongs to the original rights holders.</p>
   </div>
 </section>
 
 <section id="features">
   <div class="wrap">
-    <h2>都有<span class="grad">什么</span></h2>
-    <p class="lead">so-vits-svc 本身是命令行工具，这个项目给它套了一层 Web 界面和任务管理。</p>
+    <h2>What's <span class="grad">inside</span></h2>
+    <p class="lead">so-vits-svc is a command-line tool; this project wraps it with a web UI and task management.</p>
     <div class="grid">
-      <div class="card"><div class="icon"></div><h3>推理换声</h3><p>上传模型和音频提交任务，支持浅扩散（k_step）修音，进度在页面里实时显示。</p></div>
-      <div class="card"><div class="icon">️</div><h3>训练 + 续训</h3><p>数据集 zip 直接丢进队列。中途断了可以从 checkpoint 继续，主模型和扩散都支持。</p></div>
-      <div class="card"><div class="icon"></div><h3>随时停止试听</h3><p>训练到一半想听效果，点停止，当前 checkpoint 自动存成模型，直接拿去推理。</p></div>
-      <div class="card"><div class="icon"></div><h3>Loss 曲线</h3><p>G/D Loss 实时画成折线，验证集 loss 单独显示，方便判断是不是训过头了。</p></div>
-      <div class="card"><div class="icon">️</div><h3>按任务清理</h3><p>一个任务不要了，只清它自己的数据；可能误伤别的任务时会给提示。</p></div>
-      <div class="card"><div class="icon"></div><h3>文件管理</h3><p>模型、配置、推理结果、数据集都能在网页里下载或删除，不用登服务器。</p></div>
-      <div class="card"><div class="icon"></div><h3>预训练页</h3><p>ContentVec、NSF-HiFiGAN、底模 G_0/D_0、RMVPE 都走网页上传，省得 SSH 传文件。</p></div>
-      <div class="card"><div class="icon"></div><h3>邮件通知</h3><p>训练完成、每 N 步、推理完成都会发邮件，SMTP 服务器自己在设置页填。</p></div>
-      <div class="card"><div class="icon">️</div><h3>基本的防护</h3><p>CSRF、登录限速、路径穿越检查、上传类型校验，这些都有。</p></div>
+      <div class="card"><h3>Voice conversion</h3><p>Upload a model and audio, submit a task; shallow diffusion (k_step) supported, progress shown in real time.</p></div>
+      <div class="card"><h3>Training + resume</h3><p>Drop a dataset zip into the queue. Interrupted training can resume from checkpoints; main model and diffusion both supported.</p></div>
+      <div class="card"><h3>Stop and audition</h3><p>Stop training mid-way to hear the result; the current checkpoint is saved as a model and ready for inference.</p></div>
+      <div class="card"><h3>Loss curves</h3><p>G/D losses plotted live; validation loss shown separately to judge overfitting.</p></div>
+      <div class="card"><h3>Per-task cleanup</h3><p>Remove data for one task only; warnings appear when other tasks could be affected.</p></div>
+      <div class="card"><h3>File manager</h3><p>Download or delete models, configs, results and datasets from the web UI — no SSH needed.</p></div>
+      <div class="card"><h3>Pretrained assets</h3><p>Upload ContentVec, NSF-HiFiGAN, base models G_0/D_0, RMVPE etc. from the web page.</p></div>
+      <div class="card"><h3>Email notifications</h3><p>Get notified on training completion, progress milestones, and inference completion; SMTP is configurable.</p></div>
+      <div class="card"><h3>Basic hardening</h3><p>CSRF protection, login rate limiting, path traversal checks, upload validation.</p></div>
     </div>
   </div>
 </section>
 
 <section id="workflow">
   <div class="wrap">
-    <h2>大概<span class="grad">怎么用</span></h2>
-    <p class="lead">实际跑一圈大概是这样：</p>
+    <h2>Rough <span class="grad">workflow</span></h2>
+    <p class="lead">A typical run looks like this:</p>
     <div class="steps">
-      <div class="step"><h4>上传数据集</h4><p>zip 打包上传，太短的片段会自动跳过</p></div>
-      <div class="step"><h4>排队训练</h4><p>填总步数等参数，底模自动加载</p></div>
-      <div class="step"><h4>看 Loss 曲线</h4><p>判断还在收敛还是已经过拟合</p></div>
-      <div class="step"><h4>停止试听</h4><p>满意就停，checkpoint 自动变成模型</p></div>
-      <div class="step"><h4>训扩散</h4><p>主模型好了直接进扩散训练</p></div>
-      <div class="step"><h4>上传音频</h4><p>提交推理，拿结果</p></div>
+      <div class="step"><h4>Upload dataset</h4><p>Zip it up; clips that are too short are skipped automatically</p></div>
+      <div class="step"><h4>Queue training</h4><p>Set total steps etc.; base models load automatically</p></div>
+      <div class="step"><h4>Watch loss curves</h4><p>Judge whether it is converging or overfitting</p></div>
+      <div class="step"><h4>Stop and listen</h4><p>Stop when satisfied; the checkpoint becomes a model</p></div>
+      <div class="step"><h4>Train diffusion</h4><p>Once the main model is done, train diffusion directly</p></div>
+      <div class="step"><h4>Upload audio</h4><p>Submit inference, grab the result</p></div>
     </div>
   </div>
 </section>
 
 <section id="quickstart">
   <div class="wrap">
-    <h2>怎么<span class="grad">跑起来</span></h2>
-    <p class="lead">Windows 装好后启动就行；Linux 有整合好的部署脚本，国内镜像。</p>
+    <h2>Getting <span class="grad">started</span></h2>
+    <p class="lead">Windows: install and start. Linux: integrated deploy script using Chinese mirrors.</p>
     <div class="tabs">
       <button class="tab-btn active" data-tab="win">Windows</button>
-      <button class="tab-btn" data-tab="linux">Linux（GPU / CPU）</button>
+      <button class="tab-btn" data-tab="linux">Linux (GPU / CPU)</button>
     </div>
     <div class="tab-panel active" id="tab-win">
-      <pre><span class="cm"># 安装（自动创建 venv + 安装 CPU/CUDA torch 与依赖）</span>
+      <pre><span class="cm"># Install (creates venv, installs CPU/CUDA torch and dependencies)</span>
 install.bat
 
-<span class="cm"># 启动服务，浏览器访问 http://localhost:5000</span>
+<span class="cm"># Start, then open http://localhost:5000</span>
 start.bat</pre>
     </div>
     <div class="tab-panel" id="tab-linux">
-      <pre><span class="cm"># 下载项目后执行（需 root；支持 NVIDIA CUDA / AMD ROCm / 纯 CPU，自动切换 PyTorch）</span>
+      <pre><span class="cm"># Requires root; supports NVIDIA CUDA / AMD ROCm / CPU, auto-selects PyTorch</span>
 chmod +x deploy_linux.sh
 sudo bash deploy_linux.sh
 
-<span class="cm"># 网络慢可跳过模型下载，部署后在网页"预训练"页补传</span>
+<span class="cm"># Skip model downloads if the network is slow; upload later via the web UI</span>
 sudo bash deploy_linux.sh --skip-models</pre>
     </div>
-    <p class="table-note">脚本会装 ffmpeg / libsndfile / cmake 等系统依赖，Miniconda 和 Python 3.9 走清华、阿里云镜像，不用手动配。</p>
+    <p class="table-note">The script installs ffmpeg / libsndfile / cmake and other system deps, and installs Miniconda + Python 3.9 via Tsinghua / Aliyun mirrors.</p>
   </div>
 </section>
 
 <section id="models">
   <div class="wrap">
-    <h2>要准备哪些<span class="grad">模型</span></h2>
-    <p class="lead">推理必须有 ContentVec 和 NSF-HiFiGAN；训练的话底模 G_0 / D_0 建议放上。</p>
+    <h2>Pretrained <span class="grad">models</span></h2>
+    <p class="lead">ContentVec and NSF-HiFiGAN are required for inference; base models G_0 / D_0 are recommended for training.</p>
     <table>
-      <tr><th>文件</th><th>大小</th><th>获取方式</th></tr>
-      <tr><td><code>checkpoint_best_legacy_500.pt</code></td><td>~180 MB</td><td>部署脚本自动下载，或网页上传</td></tr>
-      <tr><td><code>nsf_hifigan/model</code> + config</td><td>~54 MB</td><td>同上</td></tr>
-      <tr><td><code>G_0.pth</code> + <code>D_0.pth</code></td><td>~400 MB</td><td>网页上传（推荐）</td></tr>
-      <tr><td><code>rmvpe.pt</code> 等编码器</td><td>可选</td><td>网页"预训练"页上传</td></tr>
+      <tr><th>File</th><th>Size</th><th>How to get</th></tr>
+      <tr><td><code>checkpoint_best_legacy_500.pt</code></td><td>~180 MB</td><td>Downloaded by deploy script, or upload in web UI</td></tr>
+      <tr><td><code>nsf_hifigan/model</code> + config</td><td>~54 MB</td><td>Same as above</td></tr>
+      <tr><td><code>G_0.pth</code> + <code>D_0.pth</code></td><td>~400 MB</td><td>Upload in web UI (recommended)</td></tr>
+      <tr><td><code>rmvpe.pt</code> etc.</td><td>optional</td><td>Upload in web UI</td></tr>
     </table>
-    <p class="table-note">文件大的话直接 scp 到 <code>pretrain/</code> 目录，网页会自动识别。</p>
+    <p class="table-note">Large files can be scp'd directly into <code>pretrain/</code>; the web UI picks them up automatically.</p>
   </div>
 </section>
 
 <section id="license">
   <div class="wrap">
     <div class="license">
-      <h3>开源协议 AGPL-3.0</h3>
-      <p>这个项目是 <a href="https://github.com/svc-develop-team/so-vits-svc" target="_blank" rel="noopener">so-vits-svc</a>（AGPL-3.0）的派生，整体按 <b>AGPL-3.0</b> 发布，源码都在仓库里。</p>
-      <p>再分发或自己部署时注意保留版权和修改声明、继续用相同协议。改过哪些文件见仓库 NOTICE。</p>
+      <h3>License: AGPL-3.0</h3>
+      <p>This project is a derivative of <a href="https://github.com/svc-develop-team/so-vits-svc" target="_blank" rel="noopener">so-vits-svc</a> (AGPL-3.0) and is released under <b>AGPL-3.0</b>. Full source is available in this repository.</p>
+      <p>Redistribution and self-hosting must keep copyright and modification notices and stay under the same license. The list of modified files is in NOTICE.</p>
     </div>
   </div>
 </section>
@@ -347,11 +315,19 @@ sudo bash deploy_linux.sh --skip-models</pre>
     <a href="https://gitee.com/DianZiNoDianZi/so-vits-svc-inference" target="_blank" rel="noopener">Gitee</a>
     <a href="https://github.com/DianziNoDianZi/so-vits-svc-server/blob/master/README.md" target="_blank" rel="noopener">README</a>
   </div>
-  <p>So-VITS-SVC Server · AGPL-3.0 · 派生自 so-vits-svc</p>
+  <p>So-VITS-SVC Server · AGPL-3.0 · Derivative of so-vits-svc</p>
 </footer>
 
 <script>
-  /* Demo player: 三轨同步播放，每轨独立音量 / 静音 */
+  document.querySelectorAll('.tab-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+      document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.remove('active'); });
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
   (function () {
     var TRACKS = [
       { id: 'track-original',    src: 'demo/original.mp3' },
@@ -363,7 +339,6 @@ sudo bash deploy_linux.sh --skip-models</pre>
       a.preload = 'auto';
       a.src = t.src;
       a.volume = 1;
-      a.dataset.track = t.id;
       document.body.appendChild(a);
       return a;
     });
@@ -371,9 +346,7 @@ sudo bash deploy_linux.sh --skip-models</pre>
     var playBtn = document.getElementById('demoPlay');
     var progressEl = document.getElementById('demoProgress');
     var timeEl = document.getElementById('demoTime');
-    var playing = false;
-    var started = false;
-    var ready = false;
+    var playing = false, started = false, ready = false;
 
     function firstReady() {
       for (var i = 0; i < audios.length; i++) if (audios[i].readyState >= 1) return audios[i];
@@ -384,8 +357,6 @@ sudo bash deploy_linux.sh --skip-models</pre>
       var m = Math.floor(s / 60), ss = Math.floor(s % 60);
       return m + ':' + (ss < 10 ? '0' : '') + ss;
     }
-
-    /* 三轨都缓冲完才能播放（避免边下边放卡顿） */
     function loadProgress() {
       var total = 0;
       for (var i = 0; i < audios.length; i++) {
@@ -408,11 +379,10 @@ sudo bash deploy_linux.sh --skip-models</pre>
       if (ready) {
         playBtn.textContent = playing ? '❚❚' : '▶';
         playBtn.disabled = false;
-        timeEl.textContent = timeEl.textContent.split('（')[0];
       } else {
         playBtn.disabled = true;
         playBtn.textContent = '…';
-        timeEl.textContent = '缓冲 ' + loadProgress() + '%';
+        timeEl.textContent = 'Buffering ' + loadProgress() + '%';
       }
       setTimeout(checkReady, 400);
     }
@@ -422,8 +392,7 @@ sudo bash deploy_linux.sh --skip-models</pre>
       if (!ready) return;
       if (playing) {
         audios.forEach(function (a) { a.pause(); });
-        playing = false;
-        playBtn.textContent = '▶';
+        playing = false; playBtn.textContent = '▶';
       } else {
         var ref = firstReady();
         if (!started) {
@@ -432,8 +401,7 @@ sudo bash deploy_linux.sh --skip-models</pre>
         }
         var t = ref.currentTime || 0;
         audios.forEach(function (a) { if (a.readyState >= 1) { try { a.currentTime = t; } catch (e) {} } a.play().catch(function () {}); });
-        playing = true;
-        playBtn.textContent = '❚❚';
+        playing = true; playBtn.textContent = '❚❚';
       }
     });
 
@@ -446,21 +414,18 @@ sudo bash deploy_linux.sh --skip-models</pre>
       audios.forEach(function (a) { if (a.readyState >= 1) { try { a.currentTime = t; } catch (err) {} } });
     });
 
-    function tick() {
+    setInterval(function () {
       var ref = firstReady();
       if (ref && ref.duration && ready) {
         var t = ref.currentTime || 0;
         progressEl.value = Math.round(t / ref.duration * 1000);
         timeEl.textContent = fmt(t) + ' / ' + fmt(ref.duration);
         if (playing && t >= ref.duration - 0.3) {
-          playing = false; started = false;
-          playBtn.textContent = '▶';
+          playing = false; started = false; playBtn.textContent = '▶';
         }
       }
-    }
-    setInterval(tick, 250);
+    }, 250);
 
-    /* 每轨音量 + 静音 */
     trackEls.forEach(function (row, i) {
       var audio = audios[i];
       var vol = row.querySelector('.demo-vol');
@@ -470,12 +435,7 @@ sudo bash deploy_linux.sh --skip-models</pre>
       vol.addEventListener('input', function () {
         audio.volume = vol.value / 100;
         pct.textContent = vol.value + '%';
-        if (muted) {
-          muted = false;
-          row.classList.remove('muted');
-          audio.muted = false;
-          muteBtn.textContent = 'M';
-        }
+        if (muted) { muted = false; row.classList.remove('muted'); audio.muted = false; muteBtn.textContent = 'M'; }
       });
       muteBtn.addEventListener('click', function () {
         muted = !muted;
@@ -485,15 +445,6 @@ sudo bash deploy_linux.sh --skip-models</pre>
       });
     });
   })();
-
-  document.querySelectorAll('.tab-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
-      document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.remove('active'); });
-      btn.classList.add('active');
-      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    });
-  });
 </script>
 </body>
 </html>
