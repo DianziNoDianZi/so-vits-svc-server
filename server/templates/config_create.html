@@ -1,5 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
+<script>
+    function syncClusterRatio() {
+        var sel = document.querySelector('select[name="model_id"]');
+        var input = document.querySelector('input[name="cluster_ratio"]');
+        if (!sel || !input) return;
+        var opt = sel.options[sel.selectedIndex];
+        var has = opt ? opt.getAttribute('data-has-cluster') === '1' : false;
+        input.disabled = !has;
+        if (!has) input.value = '0';
+    }
+    document.addEventListener('DOMContentLoaded', function () {
+        var sel = document.querySelector('select[name="model_id"]');
+        if (sel) sel.addEventListener('change', syncClusterRatio);
+        syncClusterRatio();
+    });
+</script>
 <h2>{{ '编辑配置' if config else '创建配置' }}</h2>
 <div class="card bg-dark border-secondary mt-3">
     <div class="card-body">
@@ -16,7 +32,7 @@
                 <select name="model_id" class="form-select bg-dark text-light border-secondary" required>
                     <option value="">— 选择模型 —</option>
                     {% for m in models %}
-                    <option value="{{ m.id }}">{{ m.name }}</option>
+                    <option value="{{ m.id }}" data-has-cluster="{{ '1' if m.cluster_path else '0' }}">{{ m.name }}{{ '（含检索索引）' if m.cluster_path }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -25,7 +41,7 @@
                 <label class="form-label">关联模型</label>
                 <select name="model_id" class="form-select bg-dark text-light border-secondary">
                     {% for m in models %}
-                    <option value="{{ m.id }}" {{ 'selected' if m.id == config.model_id }}>{{ m.name }}</option>
+                    <option value="{{ m.id }}" data-has-cluster="{{ '1' if m.cluster_path else '0' }}" {{ 'selected' if m.id == config.model_id }}>{{ m.name }}{{ '（含检索索引）' if m.cluster_path }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -63,6 +79,7 @@
                     <label class="form-label">聚类比例</label>
                     <input type="number" name="cluster_ratio" class="form-control bg-dark text-light border-secondary"
                            value="{{ params.get('cluster_ratio', 0) }}" min="0" max="1" step="0.1">
+                    <small class="text-secondary" id="clusterHint">需要模型挂载检索索引（训练完成自动生成）</small>
                 </div>
                 <div class="col-md-3 mb-3">
                     <label class="form-label">切片阈值 (dB)</label>

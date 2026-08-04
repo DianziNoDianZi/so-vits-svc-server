@@ -64,6 +64,43 @@ def _latest_checkpoint(directory, prefix, suffix):
     return best
 
 
+def build_retrieval_index(speaker_dir, speaker, out_dir):
+    """从训练集 ContentVec 特征（*.soft.pt）建 faiss 检索索引。
+    保存为 {speaker}_cluster.pth（pickle: {spk_id: faiss.IndexFlatIP}），
+    与 infer_tool.py 的 feature retrieval 加载格式一致。无特征时返回 None。
+    """
+    try:
+        import faiss
+        import pickle
+    except Exception as e:
+        log_line = f'[build_retrieval_index] faiss 不可用: {e}'
+        print(log_line)
+        return None
+    import numpy as np
+    import torch as _torch
+
+    feats = []
+    if not os.path.isdir(speaker_dir):
+        return None
+    for f in sorted(os.listdir(speaker_dir)):
+        if f.endswith('.soft.pt'):
+            try:
+                c = _torch.load(os.path.join(speaker_dir, f), map_location='cpu')
+                c = c.squeeze(0).transpose(0, 1).numpy().astype('float32')
+                feats.append(c)
+            except Exception:
+                continue
+    if not feats:
+        return None
+    all_feats = np.concatenate(feats, axis=0)
+    index = faiss.IndexFlatIP(all_feats.shape[1])
+    index.add(all_feats)
+    out_path = os.path.join(out_dir, f'{speaker}_cluster.pth')
+    with open(out_path, 'wb') as f:
+        pickle.dump({0: index}, f)
+    return out_path
+
+
 def _apply_encoder_dims(cfg, speech_encoder):
     """按编码器调整模型维度，与 preprocess_flist_config 保持一致。"""
     cfg.setdefault('model', {})['speech_encoder'] = speech_encoder
@@ -94,7 +131,7 @@ def stop():
 def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_size=4, total_steps=4200, keep_ckpts=3,
         speech_encoder='vec768l12', f0_predictor='dio', learning_rate=0.0001, segment_size=10240,
         lr_decay=0.999875, auto_stop=200, log_interval=200, eval_interval=800,
-        arch='sovits-v1', d_lr_scale=1.0,
+        arch='sovits-v1', d_lr_scale=1.0, flow_mode='a2',
         diff_batch_size=48, diff_epochs=100000, diff_timesteps=1000, diff_kstep=0,
         diff_layers=20, diff_chans=512, diff_hidden=256, diff_lr=0.0001,
         diff_decay_step=100000, diff_gamma=0.5, diff_amp='fp32',
@@ -178,6 +215,7 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
         diff_name = ''
         saved_model = ''
         saved_config = ''
+        saved_cluster = ''
         saved_diff_model = ''
         saved_diff_config = ''
         need_diff = model_type in ('sovits_diff', 'diffusion')
@@ -325,6 +363,11 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
             cfg['train']['max_steps'] = total_steps
             cfg['train']['auto_stop'] = auto_stop
             cfg['model']['arch'] = arch
+            if arch == 'rvc-flow':
+                cfg['model']['flow_mode'] = flow_mode
+                cfg['model']['n_flow_layer'] = 2
+                cfg['model']['n_layers_trans_flow'] = 2
+                cfg['model']['enc_q_hidden'] = 96
             cfg['train']['d_lr_scale'] = d_lr_scale
             try:
                 import torch as _torch
@@ -368,6 +411,19 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 saved_model = model_name
                 saved_config = f'config_{cfg_name}'
                 log(f'SoVITS 模型已保存: {model_name}')
+                # 自动建特征检索索引（失败不阻塞训练结果）
+                try:
+                    spk_dir = os.path.join(dataset_dir, speaker)
+                    cluster_path = build_retrieval_index(
+                        spk_dir, speaker, os.path.join(UPLOAD_BASE, 'models'))
+                    if cluster_path:
+                        saved_cluster = os.path.basename(cluster_path)
+                        log(f'特征检索索引已生成: {saved_cluster}')
+                    else:
+                        log('特征检索索引生成跳过（无特征文件）')
+                except Exception as e:
+                    log(f'特征检索索引生成失败: {e}')
+                    saved_cluster = ''
             else:
                 raise FileNotFoundError('训练未产生有效 checkpoint（G_*.pth）')
             if sovits_error:
@@ -439,6 +495,7 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
             'status': 'done',
             'model_path': model_name if model_type != 'diffusion' else '',
             'config_path': f'config_{cfg_name}' if model_type != 'diffusion' and cfg_name else '',
+            'cluster_path': saved_cluster,
             'diff_model_path': diff_name if need_diff and diff_name else '',
             'diff_config_path': f'diff_{diff_cfg_name}' if need_diff and diff_name else '',
             'progress_msg': '训练完成', 'error_msg': '', 'log': '\n'.join(log_lines),
@@ -448,6 +505,7 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
             'status': 'failed',
             'model_path': saved_model or '',
             'config_path': saved_config or '',
+            'cluster_path': saved_cluster or '',
             'diff_model_path': saved_diff_model or '',
             'diff_config_path': saved_diff_config or '',
             'error_msg': f'{type(e).__name__}: {e}',

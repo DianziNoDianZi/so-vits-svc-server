@@ -24,7 +24,7 @@ import cluster
 import utils
 from diffusion.unit2mel import load_model_vocoder
 from inference import slicer
-from models import SynthesizerTrn, SynthesizerTrnRvc
+from models import SynthesizerTrn, SynthesizerTrnRvc, SynthesizerTrnRvcFlow
 
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
@@ -193,7 +193,12 @@ class Svc(object):
     def load_model(self, spk_mix_enable=False):
         # get model configuration
         arch = self.hps_ms.model.get('arch') or 'sovits-v1'
-        _cls = SynthesizerTrnRvc if arch == 'rvc' else SynthesizerTrn
+        if arch == 'rvc':
+            _cls = SynthesizerTrnRvc
+        elif arch == 'rvc-flow':
+            _cls = SynthesizerTrnRvcFlow
+        else:
+            _cls = SynthesizerTrn
         self.net_g_ms = _cls(
             self.hps_ms.data.filter_length // 2 + 1,
             self.hps_ms.train.segment_size // self.hps_ms.data.hop_length,

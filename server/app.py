@@ -1014,6 +1014,10 @@ def task_worker():
                 cfg_obj = db.session.get(InferenceConfig, task.config_id)
                 model = db.session.get(Model, cfg_obj.model_id)
                 params = json.loads(cfg_obj.params_json) if cfg_obj.params_json else DEFAULT_PARAMS.copy()
+                # 模型没有检索索引时强制关闭 cluster_ratio，避免推理报错
+                if params.get('cluster_ratio', 0) > 0 and not model.cluster_path:
+                    params['cluster_ratio'] = 0
+                    task.progress_msg = '模型未挂载检索索引，cluster_ratio 已置 0'
 
                 audio_path = os.path.join(app.config['UPLOAD_FOLDER'], 'audio', task.audio_filename)
                 k_step = params.get('k_step', 0)
@@ -1850,12 +1854,15 @@ def train_page():
                     latest_step = max(latest_step, int(''.join(c for c in f if c.isdigit()) or 0))
         if latest_step > 0:
             try:
-                _arch = (json.loads(t.params_json or '{}') or {}).get('arch', 'sovits-v1')
+                _srcp = json.loads(t.params_json or '{}') or {}
+                _arch = _srcp.get('arch', 'sovits-v1')
+                _flow_mode = _srcp.get('flow_mode', 'a2')
             except Exception:
                 _arch = 'sovits-v1'
+                _flow_mode = 'a2'
             history_resumable.append({
                 'id': t.id, 'speaker': t.speaker, 'model_type': t.model_type, 'step': latest_step,
-                'arch': _arch,
+                'arch': _arch, 'flow_mode': _flow_mode,
             })
     return render_template('train.html',
         active=active, log_content=log_content, pct=pct,
@@ -1930,6 +1937,7 @@ def train_submit():
     params = {
         'arch': request.form.get('arch', 'sovits-v1'),
         'd_lr_scale': _flt('d_lr_scale', 1.0),
+        'flow_mode': request.form.get('flow_mode', 'a2'),
         'speech_encoder': request.form.get('speech_encoder', 'vec768l12'),
         'f0_predictor': request.form.get('f0_predictor', 'dio'),
         'learning_rate': _flt('learning_rate', 0.0001),
@@ -1961,6 +1969,8 @@ def train_submit():
             params['arch'] = src_params.get('arch', 'sovits-v1')
         if not request.form.get('d_lr_scale'):
             params['d_lr_scale'] = src_params.get('d_lr_scale', 1.0)
+        if not request.form.get('flow_mode'):
+            params['flow_mode'] = src_params.get('flow_mode', 'a2')
 
     mt = request.form.get('model_type', 'sovits')
     total_steps = _int('total_steps', 4200)
@@ -2102,11 +2112,20 @@ def train_stop():
                 if os.path.exists(cfg_src):
                     cfg_name = f'{uuid.uuid4().hex[:8]}_config_{latest.replace(".pth", ".json")}'
                     shutil.copy2(cfg_src, os.path.join(app.config['UPLOAD_FOLDER'], 'configs', cfg_name))
+                # 自动挂载训练时生成的特征检索索引（{speaker}_cluster.pth）
+                cluster_name = None
+                try:
+                    _cand = f'{task.speaker}_cluster.pth'
+                    if os.path.exists(os.path.join(app.config['UPLOAD_FOLDER'], 'models', _cand)):
+                        cluster_name = _cand
+                except Exception:
+                    pass
                 m = Model(
                     user_id=current_user.id,
                     name=f'{task.speaker}-{latest.replace(".pth", "")}step',
                     model_path=model_name,
                     config_path=cfg_name,
+                    cluster_path=cluster_name,
                 )
                 db.session.add(m)
                 task.model_path = model_name

@@ -113,7 +113,8 @@ def main():
         shallow_diffusion=k_step > 0 and diff_path is not None,
         only_diffusion=False,
         spk_mix_enable=False,
-        feature_retrieval=False,
+        # cluster_ratio > 0 且挂了检索索引时启用特征检索（faiss）
+        feature_retrieval=bool(params.get('cluster_ratio', 0) > 0),
     )
 
     os.chdir(old_cwd)

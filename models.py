@@ -390,6 +390,7 @@ class SynthesizerTrn(nn.Module):
         self.gin_channels = gin_channels
         self.ssl_dim = ssl_dim
         self.vol_embedding = vol_embedding
+        self.arch_name = 'v1'
         self.emb_g = nn.Embedding(n_speakers, gin_channels)
         self.use_depthwise_conv = use_depthwise_conv
         self.use_automatic_f0_prediction = use_automatic_f0_prediction
@@ -581,6 +582,7 @@ class SynthesizerTrnRvc(nn.Module):
         self.vol_embedding = vol_embedding
         self.use_automatic_f0_prediction = False  # RVC 式不预测 F0，直接用输入 F0
         self.character_mix = False
+        self.arch_name = 'rvc'
 
         self.emb_g = nn.Embedding(n_speakers, gin_channels)
         self.emb_uv = nn.Embedding(2, hidden_channels)
@@ -660,4 +662,198 @@ class SynthesizerTrnRvc(nn.Module):
         x = self.pre(c) * x_mask + self.emb_uv(uv.long()).transpose(1, 2) + vol
 
         o = self.dec(x, g=g, f0=f0)
+        return o, f0
+
+
+class _LightPosteriorEncoder(nn.Module):
+    """极轻量后验编码器（rvc-flow A2 用）：1 层 WN，hidden 默认 96，比 v1 的 16 层 Encoder 轻一个量级。"""
+
+    def __init__(self, in_channels, out_channels, hidden_channels=96, kernel_size=5,
+                 dilation_rate=1, n_layers=1, gin_channels=0):
+        super().__init__()
+        self.out_channels = out_channels
+        self.pre = nn.Conv1d(in_channels, hidden_channels, 1)
+        self.enc = modules.WN(hidden_channels, kernel_size, dilation_rate, n_layers,
+                              gin_channels=gin_channels)
+        self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
+
+    def forward(self, x, x_lengths, g=None):
+        x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
+        x = self.pre(x) * x_mask
+        x = self.enc(x, x_mask, g=g)
+        stats = self.proj(x) * x_mask
+        m, logs = torch.split(stats, self.out_channels, dim=1)
+        z = (m + torch.randn_like(m) * torch.exp(logs)) * x_mask
+        return z, m, logs, x_mask
+
+
+class SynthesizerTrnRvcFlow(nn.Module):
+    """
+    RVC 轻量直连 + 轻量 TransformerFlow。
+
+    flow_mode='a1'（特征先验流）：pre(c)+uv → flow 正向 → dec，KL 约束 flow 输出到标准正态先验。
+      训练与推理都走 flow 正向（特征信息完整保留，无先验采样），KL 仅作正则。
+
+    flow_mode='a2'（后验流，推荐）：极小 enc_q(spec) 提供后验 → flow 对齐先验；
+      先验由 pre 输出经单层卷积投影得到（推理时从先验采样再逆流，内容由特征驱动）。
+      A2 有 spec 后验信息，训练比 A1 稳，仍远轻于 v1（enc_q 仅 1 层 WN）。
+    """
+
+    def __init__(self,
+                 spec_channels,
+                 segment_size,
+                 inter_channels,
+                 hidden_channels,
+                 filter_channels,
+                 n_heads,
+                 n_layers,
+                 kernel_size,
+                 p_dropout,
+                 resblock,
+                 resblock_kernel_sizes,
+                 resblock_dilation_sizes,
+                 upsample_rates,
+                 upsample_initial_channel,
+                 upsample_kernel_sizes,
+                 gin_channels,
+                 ssl_dim,
+                 n_speakers,
+                 sampling_rate=44100,
+                 vol_embedding=False,
+                 vocoder_name="nsf-hifigan",
+                 use_depthwise_conv=False,
+                 use_automatic_f0_prediction=True,
+                 flow_share_parameter=False,
+                 n_flow_layer=2,
+                 n_layers_trans_flow=2,
+                 use_transformer_flow=True,
+                 flow_mode='a2',
+                 enc_q_hidden=96,
+                 **kwargs):
+        super().__init__()
+        self.spec_channels = spec_channels
+        self.segment_size = segment_size
+        self.inter_channels = inter_channels
+        self.hidden_channels = hidden_channels
+        self.gin_channels = gin_channels
+        self.ssl_dim = ssl_dim
+        self.vol_embedding = vol_embedding
+        self.use_automatic_f0_prediction = False
+        self.character_mix = False
+        self.arch_name = 'rvc-flow'
+        self.flow_mode = flow_mode
+
+        self.emb_g = nn.Embedding(n_speakers, gin_channels)
+        self.emb_uv = nn.Embedding(2, hidden_channels)
+        if vol_embedding:
+            self.emb_vol = nn.Linear(1, hidden_channels)
+
+        # 特征直连：ssl_dim -> inter_channels（与解码器 conv_pre 输入通道对齐）
+        self.pre = nn.Conv1d(ssl_dim, inter_channels, kernel_size=5, padding=2)
+
+        hps = {
+            "sampling_rate": sampling_rate,
+            "inter_channels": inter_channels,
+            "resblock": resblock,
+            "resblock_kernel_sizes": resblock_kernel_sizes,
+            "resblock_dilation_sizes": resblock_dilation_sizes,
+            "upsample_rates": upsample_rates,
+            "upsample_initial_channel": upsample_initial_channel,
+            "upsample_kernel_sizes": upsample_kernel_sizes,
+            "gin_channels": gin_channels,
+            "use_depthwise_conv": use_depthwise_conv,
+        }
+        modules.set_Conv1dModel(use_depthwise_conv)
+
+        if vocoder_name == "nsf-hifigan":
+            from vdecoder.hifigan.models import Generator
+            self.dec = Generator(h=hps)
+        elif vocoder_name == "nsf-snake-hifigan":
+            from vdecoder.hifiganwithsnake.models import Generator
+            self.dec = Generator(h=hps)
+        else:
+            print("[?] Unknown vocoder: use default(nsf-hifigan)")
+            from vdecoder.hifigan.models import Generator
+            self.dec = Generator(h=hps)
+
+        # 轻量 TransformerFlow（affine coupling + FFT）
+        self.flow = TransformerCouplingBlock(
+            inter_channels, hidden_channels, filter_channels, n_heads,
+            n_layers_trans_flow, 5, p_dropout, n_flow_layer,
+            gin_channels=gin_channels, share_parameter=flow_share_parameter)
+
+        if flow_mode == 'a2':
+            self.enc_q = _LightPosteriorEncoder(
+                spec_channels, inter_channels, hidden_channels=enc_q_hidden,
+                gin_channels=gin_channels)
+            self.prior_proj = nn.Conv1d(inter_channels, inter_channels * 2, 1)
+        else:
+            self.enc_q = None
+            self.prior_proj = None
+
+    def EnableCharacterMix(self, n_speakers_map, device):
+        self.speaker_map = torch.zeros((n_speakers_map, 1, 1, self.gin_channels)).to(device)
+        for i in range(n_speakers_map):
+            self.speaker_map[i] = self.emb_g(torch.LongTensor([[i]]).to(device))
+        self.speaker_map = self.speaker_map.unsqueeze(0).to(device)
+        self.character_mix = True
+
+    def forward(self, c, f0, uv, spec, g=None, c_lengths=None, spec_lengths=None, vol=None):
+        g = self.emb_g(g).transpose(1, 2)
+        vol = self.emb_vol(vol[:, :, None]).transpose(1, 2) if vol is not None and self.vol_embedding else 0
+        x_mask = torch.unsqueeze(commons.sequence_mask(c_lengths, c.size(2)), 1).to(c.dtype)
+        x = self.pre(c) * x_mask + self.emb_uv(uv.long()).transpose(1, 2) + vol
+
+        if self.flow_mode == 'a2':
+            # 后验：enc_q(spec)；flow 对齐先验；dec 用后验样本（v1 式）
+            z_q, m_q, logs_q, spec_mask = self.enc_q(spec, spec_lengths, g=g)
+            z_p = self.flow(z_q, spec_mask, g=g)
+            stats = self.prior_proj(x) * x_mask
+            m_p, logs_p = torch.split(stats, self.inter_channels, dim=1)
+            x_slice, pitch_slice, ids_slice = commons.rand_slice_segments_with_pitch(
+                z_q, f0, spec_lengths, self.segment_size)
+            o = self.dec(x_slice, g=g, f0=pitch_slice)
+            return o, ids_slice, spec_mask, (z_q, z_p, m_p, logs_p, m_q, logs_q), 0, 0, 0
+        else:
+            # A1：flow 正向编码特征，KL 约束到标准正态先验
+            z_p = self.flow(x, x_mask, g=g)
+            x_slice, pitch_slice, ids_slice = commons.rand_slice_segments_with_pitch(
+                z_p, f0, c_lengths, self.segment_size)
+            o = self.dec(x_slice, g=g, f0=pitch_slice)
+            zeros = torch.zeros_like(z_p)
+            return o, ids_slice, x_mask, (z_p, z_p, zeros, zeros, None, zeros), 0, 0, 0
+
+    @torch.no_grad()
+    def infer(self, c, f0, uv, g=None, noice_scale=0.35, seed=52468, predict_f0=False, vol=None):
+        if c.device == torch.device("cuda"):
+            torch.cuda.manual_seed_all(seed)
+        else:
+            torch.manual_seed(seed)
+
+        c_lengths = (torch.ones(c.size(0)) * c.size(-1)).to(c.device)
+        if self.character_mix and len(g) > 1:
+            g = g.reshape((g.shape[0], g.shape[1], 1, 1, 1))
+            g = g * self.speaker_map
+            g = torch.sum(g, dim=1)
+            g = g.transpose(0, -1).transpose(0, -2).squeeze(0)
+        else:
+            if g.dim() == 1:
+                g = g.unsqueeze(0)
+            g = self.emb_g(g).transpose(1, 2)
+
+        x_mask = torch.unsqueeze(commons.sequence_mask(c_lengths, c.size(2)), 1).to(c.dtype)
+        vol = self.emb_vol(vol[:, :, None]).transpose(1, 2) if vol is not None and self.vol_embedding else 0
+        x = self.pre(c) * x_mask + self.emb_uv(uv.long()).transpose(1, 2) + vol
+
+        if self.flow_mode == 'a2':
+            # 先验采样 -> 逆流还原 -> 解码
+            stats = self.prior_proj(x) * x_mask
+            m_p, logs_p = torch.split(stats, self.inter_channels, dim=1)
+            z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noice_scale
+            z = self.flow(z_p, x_mask, g=g, reverse=True)
+            o = self.dec(z, g=g, f0=f0)
+        else:
+            # A1：flow 正向（与训练一致，特征信息完整保留）
+            z_p = self.flow(x, x_mask, g=g)
+            o = self.dec(z_p, g=g, f0=f0)
         return o, f0

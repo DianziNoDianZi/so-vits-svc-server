@@ -33,6 +33,7 @@ from models import (
     MultiPeriodDiscriminator,
     SynthesizerTrn,
     SynthesizerTrnRvc,
+    SynthesizerTrnRvcFlow,
 )
 from modules.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
 from modules.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
@@ -117,7 +118,12 @@ def run(rank, n_gpus, hps):
                                  drop_last=False, collate_fn=collate_fn)
 
     arch = hps.model.get('arch') or 'sovits-v1'
-    _g_cls = SynthesizerTrnRvc if arch == 'rvc' else SynthesizerTrn
+    if arch == 'rvc':
+        _g_cls = SynthesizerTrnRvc
+    elif arch == 'rvc-flow':
+        _g_cls = SynthesizerTrnRvcFlow
+    else:
+        _g_cls = SynthesizerTrn
     net_g = _g_cls(
         hps.data.filter_length // 2 + 1,
         hps.train.segment_size // hps.data.hop_length,

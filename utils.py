@@ -158,6 +158,15 @@ def get_speech_encoder(speech_encoder,device=None,**kargs):
 def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False):
     assert os.path.isfile(checkpoint_path)
     checkpoint_dict = torch.load(checkpoint_path, map_location='cpu')
+    # 架构校验：checkpoint 记录的 arch 与模型不匹配时直接报错（底模除外，允许复用解码器）
+    ckpt_arch = checkpoint_dict.get('arch')
+    model_arch = getattr(model, 'arch_name', 'v1')
+    if ckpt_arch and ckpt_arch != model_arch:
+        is_base = 'G_0' in os.path.basename(checkpoint_path) or 'D_0' in os.path.basename(checkpoint_path)
+        if not is_base:
+            raise RuntimeError(
+                f'模型架构不匹配：checkpoint 是 {ckpt_arch}，当前模型是 {model_arch}。'
+                f'请使用匹配的模型/配置（{checkpoint_path}）')
     iteration = checkpoint_dict['iteration']
     learning_rate = checkpoint_dict['learning_rate']
     if optimizer is not None and not skip_optimizer and checkpoint_dict['optimizer'] is not None:
@@ -206,7 +215,8 @@ def save_checkpoint(model, optimizer, learning_rate, iteration, checkpoint_path)
   torch.save({'model': state_dict,
               'iteration': iteration,
               'optimizer': optimizer.state_dict(),
-              'learning_rate': learning_rate}, checkpoint_path)
+              'learning_rate': learning_rate,
+              'arch': getattr(model, 'arch_name', 'v1')}, checkpoint_path)
 
 def clean_checkpoints(path_to_models='logs/44k/', n_ckpts_to_keep=2, sort_by_time=True):
   """Freeing up space by deleting saved ckpts
