@@ -24,7 +24,8 @@
     "port": "8001",
     "keep_ckpts": 10,
     "all_in_mem": false,
-    "vol_aug":false
+    "vol_aug":false,
+    "d_lr_scale": 1.0
   },
   "data": {
     "training_files": "filelists/train.txt",
@@ -40,6 +41,7 @@
     "unit_interpolate_mode":"nearest"
   },
   "model": {
+    "arch": "sovits-v1",
     "inter_channels": 192,
     "hidden_channels": 192,
     "filter_channels": 768,

@@ -32,6 +32,7 @@ from data_utils import TextAudioCollate, TextAudioSpeakerLoader
 from models import (
     MultiPeriodDiscriminator,
     SynthesizerTrn,
+    SynthesizerTrnRvc,
 )
 from modules.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
 from modules.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
@@ -52,6 +53,23 @@ class _MaxStepsReached(Exception):
 
 
 _best_ref = {'loss': None, 'step': 0}
+
+
+def _apply_d_lr_scale(hps, optim_g, optim_d, step):
+    """RVC 式架构可选：训练初期压低判别器 lr，防止判别器过早碾压生成器。
+    通过 hps.train.d_lr_scale 开启（默认 1.0 不生效），前 D_LR_SCALE_STEPS 步生效。"""
+    D_LR_SCALE_STEPS = 1000
+    scale = float(hps.train.get('d_lr_scale') or 1.0)
+    if scale <= 0 or scale >= 1.0:
+        return
+    # 记录基准 lr（每次从调度器/初始值同步一次，避免 warmup 干扰）
+    if not hasattr(optim_d, '_base_lr'):
+        optim_d._base_lr = [pg['lr'] for pg in optim_d.param_groups]
+        optim_g._base_lr = [pg['lr'] for pg in optim_g.param_groups]
+    for pg, base in zip(optim_d.param_groups, optim_d._base_lr):
+        pg['lr'] = base * scale if step < D_LR_SCALE_STEPS else base
+    for pg, base in zip(optim_g.param_groups, optim_g._base_lr):
+        pg['lr'] = base
 
 
 def main():
@@ -98,7 +116,9 @@ def run(rank, n_gpus, hps):
                                  batch_size=1, pin_memory=False,
                                  drop_last=False, collate_fn=collate_fn)
 
-    net_g = SynthesizerTrn(
+    arch = hps.model.get('arch') or 'sovits-v1'
+    _g_cls = SynthesizerTrnRvc if arch == 'rvc' else SynthesizerTrn
+    net_g = _g_cls(
         hps.data.filter_length // 2 + 1,
         hps.train.segment_size // hps.data.hop_length,
         **hps.model).to(device)
@@ -193,6 +213,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
     net_g.train()
     net_d.train()
+    _apply_d_lr_scale(hps, optim_g, optim_d, global_step)
     for batch_idx, items in enumerate(train_loader):
         c, f0, spec, y, spk, lengths, uv,volume = items
         g = spk.to(device, non_blocking=True)
@@ -246,7 +267,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
             with autocast(enabled=False, dtype=half_type):
                 loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
-                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
+                # RVC 式架构无 flow（z_p is None），KL 项为 0
+                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl if z_p is not None else 0
                 loss_fm = feature_loss(fmap_r, fmap_g)
                 loss_gen, losses_gen = generator_loss(y_d_hat_g)
                 _g = net_g.module if hasattr(net_g, 'module') else net_g
@@ -258,6 +280,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
         scaler.step(optim_g)
         scaler.update()
+        _apply_d_lr_scale(hps, optim_g, optim_d, global_step + 1)
 
         if rank == 0:
             if global_step % hps.train.log_interval == 0:
