@@ -277,10 +277,22 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
             else:
                 log(f'续训: 复用数据 {speaker_dir}')
 
-            # 重新生成 filelists 与特征（已存在的特征会自动跳过）
+            # 续训尽可能复用：数据/特征/配置齐全时跳过预处理，直接进入训练
             for d in [os.path.join(PROJECT_DIR, 'configs'), os.path.join(PROJECT_DIR, 'filelists')]:
                 os.makedirs(d, exist_ok=True)
-            _exec(['preprocess_flist_config.py', '--source_dir', dataset_dir, '--speech_encoder', speech_encoder])
+
+            wav_files = [f for f in os.listdir(speaker_dir) if f.endswith('.wav')] if os.path.isdir(speaker_dir) else []
+            soft_count = sum(1 for f in wav_files if os.path.exists(os.path.join(speaker_dir, f + '.soft.pt')))
+            f0_count = sum(1 for f in wav_files if os.path.exists(os.path.join(speaker_dir, f + '.f0.npy')))
+            spec_count = sum(1 for f in wav_files if os.path.exists(os.path.join(speaker_dir, f.replace('.wav', '.spec.pt'))))
+            feat_ok = bool(wav_files) and soft_count >= len(wav_files) and f0_count >= len(wav_files) and spec_count >= len(wav_files)
+            flist_ok = os.path.exists(os.path.join(PROJECT_DIR, 'filelists', 'train.txt')) and os.path.exists(
+                os.path.join(PROJECT_DIR, 'filelists', 'val.txt'))
+
+            if not flist_ok:
+                _exec(['preprocess_flist_config.py', '--source_dir', dataset_dir, '--speech_encoder', speech_encoder])
+            else:
+                log(f'续训: filelists 已存在，跳过生成配置')
             config_path = os.path.join(PROJECT_DIR, 'configs', 'config.json')
             # 复用上一次训练实际使用的配置（train.py 会在任务目录保存 config.json 副本）
             saved_cfg = os.path.join(data_dir, 'config.json')
@@ -298,9 +310,13 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 with open(config_path, 'w', encoding='utf-8') as f:
                     json.dump(old_cfg, f, indent=2, ensure_ascii=False)
                 log(f'续训: 复用上次训练配置 {saved_cfg}')
-            diff_flag = ['--use_diff'] if need_diff else []
-            _exec(['preprocess_hubert_f0.py', '--in_dir', dataset_dir, '--f0_predictor', f0_predictor,
-                   '--num_processes', str(feature_procs)] + diff_flag)
+            if feat_ok:
+                log(f'续训: 特征齐全（soft {soft_count}/{len(wav_files)}，f0 {f0_count}/{len(wav_files)}，spec {spec_count}/{len(wav_files)}），跳过特征提取')
+            else:
+                log(f'续训: 特征不完整（soft {soft_count}/{len(wav_files)}，f0 {f0_count}/{len(wav_files)}，spec {spec_count}/{len(wav_files)}），重新提取')
+                diff_flag = ['--use_diff'] if need_diff else []
+                _exec(['preprocess_hubert_f0.py', '--in_dir', dataset_dir, '--f0_predictor', f0_predictor,
+                       '--num_processes', str(feature_procs)] + diff_flag)
         else:
             # ===== 全新训练：解压 → 重采样 → 配置 → 特征 =====
             zip_path = os.path.join(UPLOAD_BASE, 'dataset_zips', dataset_zip)

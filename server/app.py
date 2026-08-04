@@ -1986,7 +1986,18 @@ def _parse_training_log(active):
             if total_steps > 0:
                 info['pct'] = min(int(info['current_step'] / total_steps * 100), 99)
                 if info['current_step'] > 0 and elapsed_secs > 0:
-                    speed = info['current_step'] / elapsed_secs
+                    # 续训起点：链上原始任务的 checkpoint 步数（本任务新增步数才算速度，
+                    # 否则恢复的 3000 步会虚增速度，ETA 秒变 1 分钟）
+                    start_step = 0
+                    src_id = getattr(active, 'resume_from_id', None)
+                    if src_id:
+                        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{src_id}')
+                        if os.path.isdir(td):
+                            for f in os.listdir(td):
+                                if f.startswith('G_') and f.endswith('.pth'):
+                                    start_step = max(start_step, int(''.join(c for c in f if c.isdigit()) or 0))
+                    progress = info['current_step'] - start_step
+                    speed = progress / elapsed_secs if progress > 0 else 0
                     info['eta'] = _format_eta(int((total_steps - info['current_step']) / max(speed, 1e-6)))
         elif info['stage'] == 'features':
             pcts = re.findall(r'(\d+)%\|', log_content)
