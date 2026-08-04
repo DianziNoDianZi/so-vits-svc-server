@@ -267,8 +267,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
             with autocast(enabled=False, dtype=half_type):
                 loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
-                # RVC 式架构无 flow（z_p is None），KL 项为 0
-                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl if z_p is not None else 0
+                # RVC 式架构无 flow（z_p is None），KL 项为 0（用 0 维张量，避免 int 参与 .item() 崩溃）
+                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl if z_p is not None else torch.zeros((), device=y_hat.device)
                 loss_fm = feature_loss(fmap_r, fmap_g)
                 loss_gen, losses_gen = generator_loss(y_d_hat_g)
                 _g = net_g.module if hasattr(net_g, 'module') else net_g
