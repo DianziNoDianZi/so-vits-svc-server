@@ -143,9 +143,11 @@
                     </form>
                     {% endif %}
                     {% if t.id in resumable_ids %}
-                    <form method="POST" action="{{ url_for('train_resume', tid=t.id) }}" style="display:inline">
+                    {% set ckpt_step = resumable_ids[t.id] %}
+                    <form method="POST" action="{{ url_for('train_resume', tid=t.id) }}" style="display:inline" onsubmit="return askResumeStep(this, {{ ckpt_step }})">
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('从 checkpoint 续训该任务？')">续训</button>
+                        <input type="hidden" name="target_steps" value="">
+                        <button type="submit" class="btn btn-outline-warning btn-sm">续训</button>
                     </form>
                     {% endif %}
                     <form method="POST" action="{{ url_for('train_task_delete', tid=t.id) }}" style="display:inline">
@@ -161,6 +163,18 @@
 </div>
 
 <script>
+function askResumeStep(form, ckptStep) {
+    var val = prompt('续训到目标总步数？\n当前 checkpoint 已 ' + ckptStep + ' 步，目标步数必须大于 ' + ckptStep, ckptStep + 5000);
+    if (val === null) return false;
+    var n = parseInt(val, 10);
+    if (!n || isNaN(n) || n <= ckptStep) {
+        alert('目标步数必须是大于 ' + ckptStep + ' 的数字');
+        return false;
+    }
+    var hidden = form.querySelector('input[name="target_steps"]');
+    hidden.value = n;
+    return true;
+}
 (function() {
     var runningTasks = document.querySelectorAll('[data-task-id]');
     var runningTrains = document.querySelectorAll('[data-train-id]');

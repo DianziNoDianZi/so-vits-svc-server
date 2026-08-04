@@ -1420,14 +1420,18 @@ def inference():
 def task_list():
     tasks = Task.query.filter_by(user_id=current_user.id).order_by(Task.created_at.desc()).all()
     train_tasks = TrainingTask.query.filter_by(user_id=current_user.id).order_by(TrainingTask.created_at.desc()).all()
-    # 可续训：任务自身或链上原始任务的目录里有 G_*/D_* checkpoint
-    resumable_ids = set()
+    # 可续训：任务自身或链上原始任务的目录里有 G_*/D_* checkpoint，附最新步数
+    resumable_ids = {}
     for t in train_tasks:
         src_id = t.resume_from_id or t.id
         td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{src_id}')
-        if os.path.isdir(td) and any(
-                f.startswith(('G_', 'D_')) and f.endswith('.pth') for f in os.listdir(td)):
-            resumable_ids.add(t.id)
+        latest = 0
+        if os.path.isdir(td):
+            for f in os.listdir(td):
+                if f.startswith('G_') and f.endswith('.pth'):
+                    latest = max(latest, int(''.join(c for c in f if c.isdigit()) or 0))
+        if latest > 0:
+            resumable_ids[t.id] = latest
     return render_template('tasks.html', tasks=tasks, train_tasks=train_tasks, resumable_ids=resumable_ids)
 
 
@@ -2234,7 +2238,14 @@ def train_resume(tid):
     except (json.JSONDecodeError, TypeError):
         params = {}
     base = src.total_steps or 4000
-    total_steps = max(base, latest_step + base)
+    target_steps = request.form.get('target_steps', type=int) or 0
+    if target_steps > 0:
+        if target_steps <= latest_step:
+            flash(f'续训目标步数 {target_steps} 必须大于当前 checkpoint 的 {latest_step} 步', 'danger')
+            return redirect(url_for('task_list'))
+        total_steps = target_steps
+    else:
+        total_steps = max(base, latest_step + base)
     log_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{int(time.time())}')
     os.makedirs(log_dir, exist_ok=True)
 
