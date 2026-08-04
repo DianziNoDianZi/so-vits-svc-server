@@ -23,6 +23,7 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 from loguru import logger
+from scipy.signal import medfilt
 from tqdm import tqdm
 
 import diffusion.logger.utils as du
@@ -40,7 +41,42 @@ hop_length = hps.data.hop_length
 speech_encoder = hps["model"]["speech_encoder"]
 
 
-def process_one(filename, hmodel, f0p, device, diff=False, mel_extractor=None):
+def _postprocess_f0_uv(f0, uv, wav, medfilt_kernel=5, uv_energy_ratio=0.05):
+    """对提取的 F0/uv 做后处理：
+    1. 中值滤波平滑 F0（抹平呼吸/气声段的基频抖动）
+    2. 低能量帧（呼吸、气声）强化为清音（uv=0, f0=0），避免模型学到抖动的 F0
+    """
+    f0 = np.asarray(f0, dtype=np.float32)
+    uv = np.asarray(uv, dtype=np.float32).copy()
+
+    # 1) F0 中值滤波（仅浊音帧；清音帧保持原值，避免 0 混入中值窗口）
+    if medfilt_kernel >= 3 and medfilt_kernel % 2 == 1:
+        voiced = uv > 0.5
+        if np.any(voiced):
+            f0_smooth = medfilt(np.where(voiced, f0, np.nan), medfilt_kernel)
+            f0 = np.where(voiced & ~np.isnan(f0_smooth), f0_smooth, f0)
+
+    # 2) 低能量帧 -> 清音
+    if uv_energy_ratio > 0:
+        frame_len = hop_length
+        n_frames = len(f0)
+        rms = np.zeros(n_frames, dtype=np.float32)
+        for i in range(n_frames):
+            seg = wav[i * frame_len:(i + 1) * frame_len]
+            if len(seg):
+                rms[i] = float(np.sqrt(np.mean(seg.astype(np.float64) ** 2)))
+        pos = rms[rms > 0]
+        if pos.size:
+            thr = float(np.median(pos)) * uv_energy_ratio
+            low_energy = rms < thr
+            f0 = np.where(low_energy, 0.0, f0)
+            uv = np.where(low_energy, 0.0, uv)
+
+    return f0, uv
+
+
+def process_one(filename, hmodel, f0p, device, diff=False, mel_extractor=None,
+                f0_smooth_kernel=5, uv_energy_ratio=0.05):
     wav, sr = librosa.load(filename, sr=sampling_rate)
     audio_norm = torch.FloatTensor(wav)
     audio_norm = audio_norm.unsqueeze(0)
@@ -57,6 +93,9 @@ def process_one(filename, hmodel, f0p, device, diff=False, mel_extractor=None):
         f0,uv = f0_predictor.compute_f0_uv(
             wav
         )
+        f0, uv = _postprocess_f0_uv(f0, uv, wav,
+                                    medfilt_kernel=f0_smooth_kernel,
+                                    uv_energy_ratio=uv_energy_ratio)
         np.save(f0_path, np.asanyarray((f0,uv),dtype=object))
 
 
@@ -115,7 +154,8 @@ def process_one(filename, hmodel, f0p, device, diff=False, mel_extractor=None):
             np.save(aug_vol_path,aug_vol.to('cpu').numpy())
 
 
-def process_batch(file_chunk, f0p, diff=False, mel_extractor=None, device="cpu"):
+def process_batch(file_chunk, f0p, diff=False, mel_extractor=None, device="cpu",
+                  f0_smooth_kernel=5, uv_energy_ratio=0.05):
     logger.info("Loading speech encoder for content...")
     rank = mp.current_process()._identity
     rank = rank[0] if len(rank) > 0 else 0
@@ -126,16 +166,20 @@ def process_batch(file_chunk, f0p, diff=False, mel_extractor=None, device="cpu")
     hmodel = utils.get_speech_encoder(speech_encoder, device=device)
     logger.info(f"Loaded speech encoder for rank {rank}")
     for filename in tqdm(file_chunk, position = rank):
-        process_one(filename, hmodel, f0p, device, diff, mel_extractor)
+        process_one(filename, hmodel, f0p, device, diff, mel_extractor,
+                    f0_smooth_kernel, uv_energy_ratio)
 
-def parallel_process(filenames, num_processes, f0p, diff, mel_extractor, device):
+def parallel_process(filenames, num_processes, f0p, diff, mel_extractor, device,
+                     f0_smooth_kernel=5, uv_energy_ratio=0.05):
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
         tasks = []
         for i in range(num_processes):
             start = int(i * len(filenames) / num_processes)
             end = int((i + 1) * len(filenames) / num_processes)
             file_chunk = filenames[start:end]
-            tasks.append(executor.submit(process_batch, file_chunk, f0p, diff, mel_extractor, device=device))
+            tasks.append(executor.submit(process_batch, file_chunk, f0p, diff, mel_extractor, device=device,
+                                         f0_smooth_kernel=f0_smooth_kernel,
+                                         uv_energy_ratio=uv_energy_ratio))
         for task in tqdm(tasks, position = 0):
             task.result()
 
@@ -153,6 +197,14 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         '--num_processes', type=int, default=1, help='You are advised to set the number of processes to the same as the number of CPU cores'
+    )
+    parser.add_argument(
+        '--f0_smooth_kernel', type=int, default=5,
+        help='F0 中值滤波窗口（奇数，0=关闭）。平滑呼吸/气声段的基频抖动，默认 5'
+    )
+    parser.add_argument(
+        '--uv_energy_ratio', type=float, default=0.05,
+        help='低能量帧判清音的阈值（相对 RMS 中位数的比例，0=关闭）。强化呼吸/气声段的 uv，默认 0.05'
     )
     args = parser.parse_args()
     f0p = args.f0_predictor
@@ -181,4 +233,6 @@ if __name__ == "__main__":
     if num_processes == 0:
         num_processes = os.cpu_count()
 
-    parallel_process(filenames, num_processes, f0p, args.use_diff, mel_extractor, device)
+    parallel_process(filenames, num_processes, f0p, args.use_diff, mel_extractor, device,
+                     f0_smooth_kernel=args.f0_smooth_kernel,
+                     uv_energy_ratio=args.uv_energy_ratio)
