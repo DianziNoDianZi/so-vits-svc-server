@@ -38,7 +38,7 @@
     {% set cfg = t.config %}
     <div class="card bg-dark border-secondary mb-2">
         <div class="card-body py-2 px-3">
-            <div class="row align-items-center">
+            <div class="row align-items-center flex-wrap g-2">
                 <div class="col">
                     <div class="d-flex align-items-center">
                         <span class="progress-dot dot-{{ t.status }}"></span>
@@ -100,7 +100,7 @@
     {% for t in train_tasks %}
     <div class="card bg-dark border-secondary mb-2">
         <div class="card-body py-2 px-3">
-            <div class="row align-items-center">
+            <div class="row align-items-center flex-wrap g-2">
                 <div class="col">
                     <div class="d-flex align-items-center">
                         <span class="progress-dot dot-{{ t.status }}"></span>
@@ -186,17 +186,21 @@
 
     runningTasks.forEach(function(node) {
         var id = node.getAttribute('data-task-id');
-        var timer = setInterval(function() {
-            fetch('/api/tasks/' + id + '/status').then(function(r){ return r.json(); }).then(function(d) {
-                var msg = document.getElementById('tmsg-' + id);
-                if (msg) msg.textContent = d.progress_msg || '';
-                setBar(id, d.pct);
-                if (d.status === 'done' || d.status === 'failed') {
-                    clearInterval(timer);
-                    done();
-                }
-            }).catch(function(){});
-        }, 2000);
+        var es = new EventSource('/api/tasks/' + id + '/stream');
+        es.addEventListener('progress', function(e) {
+            var d = JSON.parse(e.data);
+            var msg = document.getElementById('tmsg-' + id);
+            if (msg) msg.textContent = d.progress_msg || '';
+            setBar(id, d.pct);
+        });
+        es.addEventListener('done', function(e) {
+            es.close();
+            done();
+        });
+        es.onerror = function() {
+            es.close();
+            done();
+        };
     });
 
     runningTrains.forEach(function(node) {

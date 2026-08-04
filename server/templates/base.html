@@ -12,18 +12,23 @@
         <div class="container">
             <a class="navbar-brand" href="/">So-VITS-SVC</a>
             {% if current_user.is_authenticated %}
-            <div class="navbar-nav ms-auto">
-                <span class="nav-item nav-link text-secondary">{{ current_user.username }}</span>
-                <a class="nav-link" href="{{ url_for('dashboard') }}">首页</a>
-                <a class="nav-link" href="{{ url_for('model_list') }}">模型</a>
-                <a class="nav-link" href="{{ url_for('pretrain_page') }}">预训练</a>
-                <a class="nav-link" href="{{ url_for('config_list') }}">配置</a>
-                <a class="nav-link" href="{{ url_for('inference') }}">推理</a>
-                <a class="nav-link" href="{{ url_for('task_list') }}">任务</a>
-                <a class="nav-link" href="{{ url_for('train_page') }}">训练</a>
-                <a class="nav-link" href="{{ url_for('files_page') }}">文件</a>
-                <a class="nav-link" href="{{ url_for('settings') }}">设置</a>
-                <a class="nav-link" href="{{ url_for('logout') }}">退出</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navLinks" aria-controls="navLinks" aria-expanded="false" aria-label="切换导航">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navLinks">
+                <div class="navbar-nav ms-auto">
+                    <span class="nav-item nav-link text-secondary">{{ current_user.username }}</span>
+                    <a class="nav-link" href="{{ url_for('dashboard') }}">首页</a>
+                    <a class="nav-link" href="{{ url_for('model_list') }}">模型</a>
+                    <a class="nav-link" href="{{ url_for('pretrain_page') }}">预训练</a>
+                    <a class="nav-link" href="{{ url_for('config_list') }}">配置</a>
+                    <a class="nav-link" href="{{ url_for('inference') }}">推理</a>
+                    <a class="nav-link" href="{{ url_for('task_list') }}">任务</a>
+                    <a class="nav-link" href="{{ url_for('train_page') }}">训练</a>
+                    <a class="nav-link" href="{{ url_for('files_page') }}">文件</a>
+                    <a class="nav-link" href="{{ url_for('settings') }}">设置</a>
+                    <a class="nav-link" href="{{ url_for('logout') }}">退出</a>
+                </div>
             </div>
             {% endif %}
         </div>

@@ -133,6 +133,7 @@ class Svc(object):
         self.only_diffusion = only_diffusion
         self.shallow_diffusion = shallow_diffusion
         self.feature_retrieval = feature_retrieval
+        self.cluster_model_path = cluster_model_path
         if device is None:
             self.dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -252,8 +253,21 @@ class Svc(object):
                 feature_index = self.cluster_model[speaker_id]
                 feat_np = np.ascontiguousarray(c.transpose(0,1).cpu().numpy())
                 if self.big_npy is None or self.now_spk_id != speaker_id:
-                   self.big_npy = feature_index.reconstruct_n(0, feature_index.ntotal)
-                   self.now_spk_id = speaker_id
+                    # 优先 mmap 加载训练时 dump 的 big_npy.npy（零拷贝），缺失时回退 faiss reconstruct
+                    npy_candidate = None
+                    try:
+                        _base = self.cluster_model_path or ''
+                        if _base:
+                            _c = _base.replace('.pth', '.npy').replace('.pt', '.npy')
+                            if os.path.exists(_c):
+                                npy_candidate = _c
+                    except Exception:
+                        npy_candidate = None
+                    if npy_candidate:
+                        self.big_npy = np.load(npy_candidate, mmap_mode='r')
+                    else:
+                        self.big_npy = feature_index.reconstruct_n(0, feature_index.ntotal)
+                    self.now_spk_id = speaker_id
                 print("starting feature retrieval...")
                 score, ix = feature_index.search(feat_np, k=8)
                 weight = np.square(1 / score)

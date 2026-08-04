@@ -98,6 +98,11 @@ def build_retrieval_index(speaker_dir, speaker, out_dir):
     out_path = os.path.join(out_dir, f'{speaker}_cluster.pth')
     with open(out_path, 'wb') as f:
         pickle.dump({0: index}, f)
+    # 同时 dump 全量特征 npy，推理时 mmap 零拷贝（替代 faiss reconstruct_n）
+    try:
+        np.save(out_path.replace('.pth', '.npy'), all_feats)
+    except Exception as e:
+        print(f'[build_retrieval_index] npy dump 失败（可忽略）: {e}')
     return out_path
 
 

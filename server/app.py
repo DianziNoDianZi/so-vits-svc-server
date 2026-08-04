@@ -20,7 +20,7 @@ from datetime import datetime
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, jsonify, send_file, abort, session,
+    flash, jsonify, send_file, abort, session, Response,
 )
 from flask_login import (
     login_user, logout_user, login_required, current_user,
@@ -727,7 +727,20 @@ def dashboard():
 @login_required
 def model_list():
     models = Model.query.filter_by(user_id=current_user.id).order_by(Model.created_at.desc()).all()
-    return render_template('models_list.html', models=models)
+    # 读取每个模型的架构（用于列表筛选）
+    model_items = []
+    for m in models:
+        arch = ''
+        if m.config_path:
+            cfg_p = os.path.join(app.config['UPLOAD_FOLDER'], 'configs', m.config_path)
+            if os.path.exists(cfg_p):
+                try:
+                    with open(cfg_p, 'r', encoding='utf-8') as f:
+                        arch = (json.load(f).get('model') or {}).get('arch', '')
+                except Exception:
+                    arch = ''
+        model_items.append({'m': m, 'arch': arch or 'sovits-v1'})
+    return render_template('models_list.html', model_items=model_items)
 
 
 @app.route('/models/upload', methods=['GET', 'POST'])
@@ -1260,6 +1273,52 @@ def api_task_status(task_id):
         'has_result': bool(task.result_filename),
         'error_msg': (task.error_msg or '')[:200],
     })
+
+
+@app.route('/api/tasks/<int:task_id>/stream')
+@login_required
+def api_task_stream(task_id):
+    """推理任务进度 SSE：推送 progress/done 事件，前端 EventSource 实时接收。"""
+    task = db.session.get(Task, task_id)
+    if not task or task.user_id != current_user.id:
+        abort(404)
+
+    def gen():
+        sent = 0
+        while True:
+            with app.app_context():
+                t = db.session.get(Task, task_id)
+                if not t:
+                    yield 'event: done\ndata: {"status":"gone"}\n\n'
+                    break
+                if t.status == 'running':
+                    pct = None
+                    m = re.search(r'\((\d+)%\)', t.progress_msg or '')
+                    if m:
+                        pct = int(m.group(1))
+                    payload = json.dumps({
+                        'status': 'running',
+                        'progress_msg': t.progress_msg or '',
+                        'pct': pct,
+                    }, ensure_ascii=False)
+                    yield f'event: progress\ndata: {payload}\n\n'
+                else:
+                    payload = json.dumps({
+                        'status': t.status,
+                        'progress_msg': t.progress_msg or '',
+                        'error_msg': t.error_msg or '',
+                    }, ensure_ascii=False)
+                    yield f'event: done\ndata: {payload}\n\n'
+                    break
+            sent += 1
+            if sent > 3600 * 2:  # 最长推送 2 小时，防止连接泄漏
+                break
+            time.sleep(1)
+
+    return Response(gen(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
 @app.route('/inference', methods=['GET', 'POST'])
 @login_required
 def inference():
@@ -1620,6 +1679,55 @@ def file_delete():
         return redirect(url_for('files_page'))
     os.remove(path)
     flash(f'已删除 {name}', 'success')
+    return redirect(url_for('files_page'))
+
+
+@app.route('/files/delete_batch', methods=['POST'])
+@login_required
+def file_delete_batch():
+    """批量删除文件（同目录多个文件），引用检查与单删一致。"""
+    sub = request.form.get('sub', '')
+    names = request.form.getlist('names')
+    if sub not in FILE_DIRS or not names:
+        flash('参数错误', 'danger')
+        return redirect(url_for('files_page'))
+    ok, skipped = 0, []
+    for name in names:
+        if not name or os.path.basename(name) != name:
+            skipped.append(name)
+            continue
+        try:
+            path = safe_join(app.config['UPLOAD_FOLDER'], sub, name)
+        except ValueError:
+            skipped.append(name)
+            continue
+        if not os.path.exists(path):
+            skipped.append(name)
+            continue
+        ref = None
+        if sub in ('models', 'configs'):
+            ref = Model.query.filter(sa.or_(
+                Model.model_path == name, Model.config_path == name,
+                Model.diff_model_path == name, Model.diff_config_path == name,
+                Model.cluster_path == name,
+            )).first()
+            if not ref:
+                ref = TrainingTask.query.filter(sa.or_(
+                    TrainingTask.model_path == name, TrainingTask.config_path == name,
+                    TrainingTask.diff_model_path == name, TrainingTask.diff_config_path == name,
+                )).first()
+        if ref:
+            skipped.append(name)
+            continue
+        try:
+            os.remove(path)
+            ok += 1
+        except OSError:
+            skipped.append(name)
+    if ok:
+        flash(f'已批量删除 {ok} 个文件', 'success')
+    if skipped:
+        flash(f'{len(skipped)} 个文件跳过（被引用或不存在）：{", ".join(skipped[:5])}', 'warning')
     return redirect(url_for('files_page'))
 
 

@@ -6,6 +6,19 @@
 </div>
 
 {% if configs %}
+<div class="row mt-3 g-2">
+    <div class="col-md-6">
+        <input type="text" id="cfgSearch" class="form-control bg-dark text-light border-secondary" placeholder="搜索配置名 / 模型名...">
+    </div>
+    <div class="col-md-3">
+        <select id="cfgSort" class="form-select bg-dark text-light border-secondary">
+            <option value="time-desc">时间（新→旧）</option>
+            <option value="time-asc">时间（旧→新）</option>
+            <option value="name-asc">名称（A→Z）</option>
+        </select>
+    </div>
+    <div class="col-md-3 text-secondary small align-self-center" id="cfgCount"></div>
+</div>
 <div class="table-responsive mt-3">
     <table class="table table-dark table-striped">
         <thead>
@@ -24,7 +37,7 @@
         <tbody>
             {% for c in configs %}
             {% set p = c.params_json | from_json %}
-            <tr>
+            <tr data-name="{{ c.name|lower }}" data-model="{{ c.model.name|lower }}" data-time="{{ c.created_at.timestamp() }}">
                 <td>{{ c.name }}</td>
                 <td>{{ c.model.name }}</td>
                 <td>{{ p.get('device', 'auto') }}</td>
@@ -45,6 +58,34 @@
         </tbody>
     </table>
 </div>
+<script>
+(function () {
+    var table = document.querySelector('table');
+    if (!table) return;
+    var rows = Array.prototype.slice.call(table.tBodies[0].rows);
+    var searchEl = document.getElementById('cfgSearch');
+    var sortEl = document.getElementById('cfgSort');
+    var countEl = document.getElementById('cfgCount');
+    function render() {
+        var q = (searchEl.value || '').toLowerCase();
+        var sort = sortEl.value;
+        var visible = rows.filter(function (r) {
+            return !q || r.dataset.name.indexOf(q) !== -1 || r.dataset.model.indexOf(q) !== -1;
+        });
+        visible.sort(function (a, b) {
+            if (sort === 'time-asc') return parseFloat(a.dataset.time) - parseFloat(b.dataset.time);
+            if (sort === 'time-desc') return parseFloat(b.dataset.time) - parseFloat(a.dataset.time);
+            return a.dataset.name.localeCompare(b.dataset.name);
+        });
+        rows.forEach(function (r) { r.style.display = 'none'; });
+        visible.forEach(function (r) { r.style.display = ''; });
+        if (countEl) countEl.textContent = '显示 ' + visible.length + ' / ' + rows.length;
+    }
+    searchEl.addEventListener('input', render);
+    sortEl.addEventListener('change', render);
+    render();
+})();
+</script>
 {% else %}
 <div class="card bg-dark border-secondary mt-3">
     <div class="card-body text-center py-5">
