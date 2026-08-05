@@ -2182,6 +2182,15 @@ def train_page():
                 'id': t.id, 'speaker': t.speaker, 'model_type': t.model_type, 'step': latest_step,
                 'arch': _arch, 'flow_mode': _flow_mode,
             })
+    # 快速恢复快照（停止后一键继续上次训练）
+    qr_meta = None
+    qr_path = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', 'quick_resume', 'meta.json')
+    if os.path.exists(qr_path):
+        try:
+            with open(qr_path, 'r', encoding='utf-8') as f:
+                qr_meta = json.load(f)
+        except Exception:
+            qr_meta = None
     return render_template('train.html',
         active=active, log_content=log_content, pct=pct,
         current_step=current_step, total_steps=total_steps,
@@ -2193,7 +2202,53 @@ def train_page():
         stage_index=next((i for i, (k, _) in enumerate(STAGES) if k == current_stage), 0),
         running=running, queued=queued, done_count=done_count,
         history=history, history_resumable=history_resumable,
+        quick_resume=qr_meta,
         alive=active is not None)
+
+
+@app.route('/train/quick-resume', methods=['POST'])
+@login_required
+def train_quick_resume():
+    """从 TEMP 快照一键恢复上次训练（不弹步数，自动续到原目标或 +5000）。"""
+    qr = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', 'quick_resume')
+    meta_p = os.path.join(qr, 'meta.json')
+    if not os.path.exists(meta_p):
+        flash('没有可快速恢复的训练快照（需要先训练并停止过一次）', 'danger')
+        return redirect(url_for('train_page'))
+    try:
+        with open(meta_p, 'r', encoding='utf-8') as f:
+            meta = json.load(f)
+    except Exception:
+        flash('快速恢复快照损坏，无法恢复', 'danger')
+        return redirect(url_for('train_page'))
+    ckpt_step = meta.get('checkpoint_step') or 0
+    total = max(meta.get('total_steps') or 0, ckpt_step + 5000)
+    log_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{int(time.time())}')
+    os.makedirs(log_dir, exist_ok=True)
+    params = {
+        'arch': meta.get('arch', 'sovits-v1'),
+        'd_lr_scale': 0.5 if meta.get('arch') in ('rvc', 'rvc-flow') else 1.0,
+        'flow_mode': meta.get('flow_mode', 'a2'),
+        'speech_encoder': meta.get('speech_encoder', 'vec768l12'),
+        'f0_predictor': meta.get('f0_predictor', 'dio'),
+    }
+    task = TrainingTask(
+        user_id=current_user.id,
+        speaker=meta.get('speaker') or 'speaker',
+        dataset_zip=meta.get('dataset_zip') or '',
+        model_type=meta.get('model_type', 'sovits'),
+        batch_size=meta.get('batch_size') or 4,
+        total_steps=total,
+        keep_ckpts=meta.get('keep_ckpts') or 3,
+        params_json=json.dumps(params),
+        log_path=os.path.join(log_dir, 'train.log'),
+        resume_from_id=meta.get('resume_from_id'),
+        status='pending',
+    )
+    db.session.add(task)
+    db.session.commit()
+    flash(f'已快速恢复训练 #{task.id}：{meta.get("speaker")} 从 checkpoint {ckpt_step} 步继续，目标 {total} 步', 'success')
+    return redirect(url_for('task_list'))
 
 
 @app.route('/train/submit', methods=['POST'])

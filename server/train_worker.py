@@ -11,6 +11,7 @@ from pathlib import Path
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 UPLOAD_BASE = os.path.join(os.path.dirname(__file__), 'uploads')
 PYTHON = sys.executable
+QUICK_RESUME_DIR = os.path.join(UPLOAD_BASE, 'train_data', 'quick_resume')
 
 
 def _find_ffmpeg():
@@ -104,6 +105,44 @@ def build_retrieval_index(speaker_dir, speaker, out_dir):
     except Exception as e:
         print(f'[build_retrieval_index] npy dump 失败（可忽略）: {e}')
     return out_path
+
+
+def write_quick_resume(task_id, speaker, dataset_zip, model_type, batch_size, total_steps,
+                       keep_ckpts, speech_encoder, f0_predictor, arch, flow_mode,
+                       resume_from_id, checkpoint_path, config_path):
+    """把最新 checkpoint + 配置打成"快速恢复"快照（只保留最近 1 份，模型少）。
+    停止后训练页/任务列表一键继续上次训练。"""
+    try:
+        os.makedirs(QUICK_RESUME_DIR, exist_ok=True)
+        # 清掉旧快照（只留当前这一份）
+        for f in os.listdir(QUICK_RESUME_DIR):
+            try:
+                os.remove(os.path.join(QUICK_RESUME_DIR, f))
+            except OSError:
+                pass
+        shutil.copy2(checkpoint_path, os.path.join(QUICK_RESUME_DIR, 'G_latest.pth'))
+        shutil.copy2(config_path, os.path.join(QUICK_RESUME_DIR, 'config.json'))
+        meta = {
+            'task_id': task_id,
+            'speaker': speaker,
+            'dataset_zip': dataset_zip,
+            'model_type': model_type,
+            'batch_size': batch_size,
+            'total_steps': total_steps,
+            'keep_ckpts': keep_ckpts,
+            'speech_encoder': speech_encoder,
+            'f0_predictor': f0_predictor,
+            'arch': arch,
+            'flow_mode': flow_mode,
+            'resume_from_id': resume_from_id or task_id,
+            'checkpoint_step': int(''.join(c for c in os.path.basename(checkpoint_path) if c.isdigit()) or 0),
+        }
+        with open(os.path.join(QUICK_RESUME_DIR, 'meta.json'), 'w', encoding='utf-8') as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f'[write_quick_resume] 快照写入失败: {e}')
+        return False
 
 
 def _apply_encoder_dims(cfg, speech_encoder):
@@ -445,6 +484,15 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 except Exception as e:
                     log(f'特征检索索引生成失败: {e}')
                     saved_cluster = ''
+                # 快速恢复快照（最新 checkpoint + 配置，只保留 1 份）
+                try:
+                    if write_quick_resume(
+                            task_id, speaker, dataset_zip, model_type, batch_size, total_steps,
+                            keep_ckpts, speech_encoder, f0_predictor, arch, flow_mode,
+                            resume_from_id, os.path.join(data_dir, model_name), config_path):
+                        log(f'快速恢复快照已更新（{os.path.basename(model_name)}）')
+                except Exception as e:
+                    log(f'快速恢复快照写入失败: {e}')
             else:
                 raise FileNotFoundError('训练未产生有效 checkpoint（G_*.pth）')
             if sovits_error:

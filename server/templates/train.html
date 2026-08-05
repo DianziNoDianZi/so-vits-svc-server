@@ -1,5 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
+{% if quick_resume %}
+<div class="card bg-dark border-secondary mb-3">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <h5 class="text-light mb-1">⚡ 快速恢复上次训练</h5>
+                <small class="text-secondary">说话人: {{ quick_resume.speaker }} · checkpoint {{ quick_resume.checkpoint_step }} 步 · {{ quick_resume.arch }}</small>
+            </div>
+            <form method="POST" action="{{ url_for('train_quick_resume') }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-warning" onclick="return confirm('从上次 checkpoint 继续训练？（目标步数自动 = 原目标或 checkpoint+5000）')">继续上次训练</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
 <div class="row">
     <div class="col-md-6">
         <div class="card bg-dark border-secondary">
