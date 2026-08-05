@@ -1145,7 +1145,6 @@ def task_worker():
                     estimated_total = max(int(audio_info.duration / 10) + 1, 1)
                 except Exception:
                     estimated_total = 5
-                segments_done = 0
                 tail_lines = deque(maxlen=100)
                 started_at = time.time()
                 task_timeout = int(os.environ.get('INFERENCE_TASK_TIMEOUT', str(6 * 3600)))
@@ -1153,6 +1152,7 @@ def task_worker():
                 result_ok = False
                 result_err = None
                 while True:
+                    segments_done = 0  # 每次轮询重置，重新累计 prog 中当前段数（否则会持续累加虚涨）
                     # 超时保护
                     if task_timeout > 0 and time.time() - started_at > task_timeout:
                         result_err = f'推理超过 {task_timeout // 3600}h 仍未完成，已终止'
