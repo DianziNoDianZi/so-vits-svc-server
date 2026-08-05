@@ -1161,6 +1161,10 @@ def task_worker():
                     if task_timeout > 0 and time.time() - started_at > task_timeout:
                         result_err = f'推理超过 {task_timeout // 3600}h 仍未完成，已终止'
                         break
+                    # 完成标记存在 = daemon 已完整写完结果（不依赖 done_q 通知，双保险）
+                    if os.path.exists(result_path + '.done'):
+                        result_ok = True
+                        break
                     # 读取 daemon 进度文件（段级进度）
                     try:
                         with open(prog_path, 'r', encoding='utf-8', errors='replace') as pf:

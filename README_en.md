@@ -26,6 +26,7 @@ This project is a derivative of [so-vits-svc](https://github.com/svc-develop-tea
 - **Pretrained assets page**: upload ContentVec, NSF-HiFiGAN, base models G_0/D_0 etc.
 - **Email notifications**: training complete / progress / anomaly and inference complete (configurable SMTP)
 - **Performance**: inference model LRU cache (zero load cost on repeated inference), GPU torch.compile
+- **Task control**: stop training/inference anytime (inference keeps model cache, checkpoints auto-saved)
 - **Ops**: one-click git pull + graceful restart in settings; training parameter presets
 - Security: CSRF protection, login rate limiting, path traversal checks, persistent session key, checkpoint architecture validation
 

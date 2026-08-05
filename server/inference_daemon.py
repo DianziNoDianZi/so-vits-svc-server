@@ -192,6 +192,12 @@ def _run_inference(p, svc, device):
     svc.clear_empty()
     sf.write(p['result_path'], audio, svc.target_sample,
              format=params.get('output_format', 'wav'))
+    # 完成标记：结果完整写入后才创建，供 task_worker 双保险检测
+    try:
+        with open(p['result_path'] + '.done', 'w') as f:
+            f.write('ok')
+    except Exception:
+        pass
 
 
 def main(q, done_q, cache_size):
