@@ -176,10 +176,15 @@ class Svc(object):
             
         if os.path.exists(cluster_model_path):
             if self.feature_retrieval:
-                with open(cluster_model_path,"rb") as f:
-                    self.cluster_model = pickle.load(f)
-                self.big_npy = None
-                self.now_spk_id = -1
+                try:
+                    with open(cluster_model_path, "rb") as f:
+                        self.cluster_model = pickle.load(f)
+                    self.big_npy = None
+                    self.now_spk_id = -1
+                except Exception:
+                    # 文件不是 faiss 检索索引（可能是 kmeans 聚类模型），回退聚类模式
+                    self.feature_retrieval = False
+                    self.cluster_model = cluster.get_cluster_model(cluster_model_path)
             else:
                 self.cluster_model = cluster.get_cluster_model(cluster_model_path)
         else:

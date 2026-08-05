@@ -119,6 +119,7 @@ class ModelCache:
 
 def _build_svc(p, device):
     from inference.infer_tool import Svc
+    _params = p.get('params') or {}
     return Svc(
         net_g_path=p['model_path'],
         config_path=p['config_path'],
@@ -130,7 +131,7 @@ def _build_svc(p, device):
         shallow_diffusion=bool(p.get('k_step', 0) > 0 and p.get('diff_path')),
         only_diffusion=False,
         spk_mix_enable=False,
-        feature_retrieval=bool(p.get('cluster_ratio', 0) > 0 and p.get('cluster_path')),
+        feature_retrieval=bool(_params.get('cluster_ratio', 0) > 0 and p.get('cluster_path')),
     )
 
 
