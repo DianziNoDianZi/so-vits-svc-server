@@ -19,7 +19,7 @@ This project is a derivative of [so-vits-svc](https://github.com/svc-develop-tea
 - **Training**: dataset zip → queued training; **resume to a target step** (main model and diffusion, one-click from the task list)
 - **Multiple architectures**: SoVITS v1 / RVC direct / RVC-Flow (lightweight TransformerFlow, A1/A2 switchable), selectable on the training page
 - **Stop & audition**: stop training anytime; the current checkpoint is saved as a model for immediate inference
-- **Monitoring**: SSE live progress, G/D loss curves (separate diffusion curve), **validation loss** (overfitting check), recent-speed ETA
+- **Monitoring**: live progress, G/D loss curves (separate diffusion curve), **validation loss** (overfitting check), recent-speed ETA
 - **Anomaly email confirmation**: when the discriminator crushes the generator or loss goes NaN, an email with continue/stop confirmation links is sent
 - **Precise cleanup**: per-task / per-model / per-dataset cleanup with mis-deletion warnings
 - **File manager**: paginated browsing, batch delete, download models / configs / results / datasets
@@ -27,6 +27,7 @@ This project is a derivative of [so-vits-svc](https://github.com/svc-develop-tea
 - **Email notifications**: training complete / progress / anomaly and inference complete (configurable SMTP)
 - **Performance**: inference model LRU cache (zero load cost on repeated inference), GPU torch.compile
 - **Task control**: stop training/inference anytime (inference keeps model cache, checkpoints auto-saved)
+- **Quick resume**: one-click continue the last training after stopping (TEMP snapshot, all params editable)
 - **Ops**: one-click git pull + graceful restart in settings; training parameter presets
 - Security: CSRF protection, login rate limiting, path traversal checks, persistent session key, checkpoint architecture validation
 
@@ -85,7 +86,7 @@ The script installs ffmpeg / libsndfile / cmake and other system deps, and sets 
 **Inference:**
 1. Model management → upload `G_*.pth` + config.json (optionally diffusion model + diffusion.yaml)
 2. Create an inference preset (f0 predictor, noise_scale, k_step, etc.)
-3. Upload audio → submit → watch progress / download the result in the task list
+3. Pick a preset + upload audio on the inference page (params overridable inline) → watch progress / stop / download in the task list
 
 **Training:**
 1. Training page → upload dataset zip (clips < 2s are filtered automatically)
@@ -113,6 +114,7 @@ server/
 
 - Model weights, database and keys are **not** in git (see .gitignore)
 - CPU servers can run inference; training is possible but very slow — prefer GPU training then upload models
+- CPU inference tips: use `pm`/`harvest` F0 predictor (`crepe` is several times slower), lower `k_step` (30~100) as needed
 - Deploying behind the GFW: apt/conda/pip all use Tsinghua/Aliyun mirrors; torch uses `--no-deps` to skip nvidia packages
 - fairseq needs pip 24.0 (handled by the script); librosa 0.10.1 for newer numpy/torch compatibility
 - Training DataLoader defaults to `num_workers=2` (auto-upgrades to 4 with enough RAM, drops to 0 below 8GB)
