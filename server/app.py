@@ -1166,9 +1166,11 @@ def task_worker():
                         result_ok = True
                         break
                     # 读取 daemon 进度文件（段级进度）
+                    prog_exists = False
                     try:
                         with open(prog_path, 'r', encoding='utf-8', errors='replace') as pf:
                             prog_text = pf.read()
+                        prog_exists = True
                         for line in prog_text.splitlines():
                             text = line.strip()
                             if not text:
@@ -1176,18 +1178,14 @@ def task_worker():
                             tail_lines.append(text)
                             if '#=====segment start' in text:
                                 segments_done += 1
-                                if 'sample time step:' not in text:
-                                    base_pct = min(int((segments_done - 1) * 100 / max(est_total_fixed, 1)), 99)
-                                    _update_progress(task, f'推理中 ({base_pct}%) — 已处理 {segments_done} 段')
-                            if 'sample time step:' in text and '%|' in text:
-                                m = re.search(r'(\d+)%\|', text)
-                                if m:
-                                    diff_pct = int(m.group(1))
-                                    base_pct = (segments_done - 1) * 100 / max(est_total_fixed, 1)
-                                    total_pct = min(int(base_pct + diff_pct / max(est_total_fixed, 1)), 99)
-                                    _update_progress(task, f'推理中 ({total_pct}%) — 已处理 {segments_done} 段')
                     except OSError:
                         pass
+                    # 每次轮询都刷新进度（即使段数没变），避免页面停在"正在加载模型"
+                    if prog_exists:
+                        base_pct = min(int(segments_done * 100 / max(est_total_fixed, 1)), 99)
+                        _update_progress(task, f'推理中 ({base_pct}%) — 已处理 {segments_done} 段')
+                    else:
+                        _update_progress(task, '正在加载模型/等待推理...')
                     # 完成通知
                     try:
                         tid, ok, err = inference_done_q.get_nowait()
