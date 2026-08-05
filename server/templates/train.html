@@ -62,13 +62,24 @@
                 function ensureLossChart(ld) {
                     if (!ld || !ld.length) return;
                     if (typeof Chart === 'undefined') return;  // Chart.js 未加载（CDN 失败等）
+                    var isDiff = ld[0].diff !== undefined && ld[0].g === undefined;
                     if (window.lossChartInst) {
-                        var ch = window.lossChartInst;
-                        ch.data.labels = ld.map(function (_, i) { return i; });
-                        ch.data.datasets[0].data = ld.map(function (d) { return d.g; });
-                        ch.data.datasets[1].data = ld.map(function (d) { return d.d; });
-                        ch.update();
-                        return;
+                        // 架构切换（sovits <-> 扩散）时重建
+                        var sameMode = (window.lossChartMode === 'diff') === isDiff;
+                        if (sameMode) {
+                            var ch = window.lossChartInst;
+                            ch.data.labels = ld.map(function (_, i) { return i; });
+                            if (isDiff) {
+                                ch.data.datasets[0].data = ld.map(function (d) { return d.diff; });
+                            } else {
+                                ch.data.datasets[0].data = ld.map(function (d) { return d.g; });
+                                ch.data.datasets[1].data = ld.map(function (d) { return d.d; });
+                            }
+                            ch.update();
+                            return;
+                        }
+                        window.lossChartInst.destroy();
+                        window.lossChartInst = null;
                     }
                     var box = document.getElementById('lossChartBox');
                     if (!box) {
@@ -87,14 +98,22 @@
                     }
                     var canvas = document.getElementById('lossChart');
                     if (!canvas) return;
+                    var datasets;
+                    if (isDiff) {
+                        datasets = [
+                            {label:'Diff Loss', data:ld.map(function(d){return d.diff;}), borderColor:'#7ee0c2', borderWidth:1, pointRadius:0, fill:false}
+                        ];
+                    } else {
+                        datasets = [
+                            {label:'G Loss', data:ld.map(function(d){return d.g;}), borderColor:'#0d6efd', borderWidth:1, pointRadius:0, fill:false},
+                            {label:'D Loss', data:ld.map(function(d){return d.d;}), borderColor:'#dc3545', borderWidth:1, pointRadius:0, fill:false}
+                        ];
+                    }
                     window.lossChartInst = new Chart(canvas.getContext('2d'), {
                         type: 'line',
                         data: {
                             labels: ld.map(function (_, i) { return i; }),
-                            datasets: [
-                                {label:'G Loss', data:ld.map(function(d){return d.g;}), borderColor:'#0d6efd', borderWidth:1, pointRadius:0, fill:false},
-                                {label:'D Loss', data:ld.map(function(d){return d.d;}), borderColor:'#dc3545', borderWidth:1, pointRadius:0, fill:false}
-                            ]
+                            datasets: datasets
                         },
                         options: {
                             responsive: true,
@@ -106,6 +125,7 @@
                             }
                         }
                     });
+                    window.lossChartMode = isDiff ? 'diff' : 'sovits';
                 }
                 {% if loss_data and loss_data != '[]' %}
                 ensureLossChart({{ loss_data|safe }});

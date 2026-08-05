@@ -144,11 +144,18 @@
                     {% endif %}
                     {% if t.id in resumable_ids %}
                     {% set ckpt_step = resumable_ids[t.id] %}
+                    {% if t.model_type == 'diffusion' %}
+                    <form method="POST" action="{{ url_for('train_resume', tid=t.id) }}" style="display:inline" onsubmit="return confirm('从扩散 checkpoint {{ ckpt_step }} 步续训？')">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-warning btn-sm">续训</button>
+                    </form>
+                    {% else %}
                     <form method="POST" action="{{ url_for('train_resume', tid=t.id) }}" style="display:inline" onsubmit="return askResumeStep(this, {{ ckpt_step }})">
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="target_steps" value="">
                         <button type="submit" class="btn btn-outline-warning btn-sm">续训</button>
                     </form>
+                    {% endif %}
                     {% endif %}
                     <form method="POST" action="{{ url_for('train_task_delete', tid=t.id) }}" style="display:inline">
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">

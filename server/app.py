@@ -1424,12 +1424,19 @@ def task_list():
     resumable_ids = {}
     for t in train_tasks:
         src_id = t.resume_from_id or t.id
-        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{src_id}')
         latest = 0
-        if os.path.isdir(td):
-            for f in os.listdir(td):
-                if f.startswith('G_') and f.endswith('.pth'):
-                    latest = max(latest, int(''.join(c for c in f if c.isdigit()) or 0))
+        if t.model_type == 'diffusion':
+            dd = os.path.join(PROJECT_DIR, 'logs', '44k', 'diffusion', f'task_{src_id}')
+            if os.path.isdir(dd):
+                for f in os.listdir(dd):
+                    if f.startswith('model_') and f.endswith('.pt'):
+                        latest = max(latest, int(''.join(c for c in f if c.isdigit()) or 0))
+        else:
+            td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{src_id}')
+            if os.path.isdir(td):
+                for f in os.listdir(td):
+                    if f.startswith('G_') and f.endswith('.pth'):
+                        latest = max(latest, int(''.join(c for c in f if c.isdigit()) or 0))
         if latest > 0:
             resumable_ids[t.id] = latest
     return render_template('tasks.html', tasks=tasks, train_tasks=train_tasks, resumable_ids=resumable_ids)
@@ -1924,6 +1931,17 @@ def _format_eta(seconds):
     return f'{seconds}s'
 
 
+def _parse_step_times(log_content):
+    """从日志提取 [HH:MM:SS] ... step: N 序列（sovits Losses 行与扩散 solver 行都带）。"""
+    pairs = []
+    for line in log_content.split('\n'):
+        m = re.search(r'\[(\d{2}):(\d{2}):(\d{2})\].*step:\s*(\d+)', line)
+        if m:
+            h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            pairs.append((h * 3600 + mi * 60 + s, int(m.group(4))))
+    return pairs
+
+
 def _parse_training_log(active):
     """从训练日志解析进度，页面与 API 共用。"""
     info = {
@@ -1952,6 +1970,7 @@ def _parse_training_log(active):
     except Exception:
         log_content = ''
     info['stage'] = detect_stage(log_content, active.progress_msg or '')
+    diff_extra = ''  # 扩散 solver 日志（log_info.txt），供 diff_train 阶段与 loss 解析使用
 
     elapsed_secs = 0
     if active.created_at:
@@ -1967,38 +1986,62 @@ def _parse_training_log(active):
             info['diff_total_epochs'] = int(dc.get('train', {}).get('epochs', 0) or 0)
         except Exception:
             info['diff_total_epochs'] = 0
-        m = re.search(r'epoch:\s*(\d+)\s*\|\s*(\d+)/(\d+)', log_content)
+        # 扩散 solver 日志写在 expdir/log_info.txt（train.log 里没有），需要单独读取。
+        # 格式：epoch: 5 | 123/456 | expdir | batch/s: 1.20 | lr: 0.0001 | loss: 1.234 | time: 10s | step: 12345
+        root_id = active.resume_from_id or active.id
+        diff_log = os.path.join(PROJECT_DIR, 'logs', '44k', 'diffusion', f'task_{root_id}', 'log_info.txt')
+        diff_extra = ''
+        if os.path.exists(diff_log):
+            try:
+                with open(diff_log, 'r', encoding='utf-8') as f:
+                    f.seek(0, 2)
+                    size = f.tell()
+                    f.seek(max(0, size - 262144))
+                    diff_extra = f.read()
+            except Exception:
+                diff_extra = ''
+        m = re.search(r'epoch:\s*(\d+)\s*\|\s*(\d+)/(\d+)', diff_extra)
         if m:
             info['diff_epoch'] = int(m.group(1))
-            batch_now = int(m.group(2))
             batch_total = max(int(m.group(3)), 1)
-            frac = (info['diff_epoch'] - 1) + batch_now / batch_total
-            if info['diff_total_epochs'] > 0:
-                info['pct'] = min(int(frac / info['diff_total_epochs'] * 100 + 0.5), 99)
-                if info['pct'] > 0 and elapsed_secs > 0:
-                    info['eta'] = _format_eta(int(elapsed_secs * (100 - info['pct']) / info['pct']))
+            diff_total_steps = max(info['diff_total_epochs'], 1) * batch_total
+            info['total_steps'] = diff_total_steps
+            sm = re.findall(r'\| step:\s*(\d+)', diff_extra)
+            if sm:
+                info['current_step'] = min(int(sm[-1]), diff_total_steps)
+                info['pct'] = min(int(info['current_step'] / diff_total_steps * 100), 99)
+                # log_info.txt 无时间戳：用全程平均，但扣除续训起点（避免恢复步数虚增速度）
+                start_step = 0
+                if active.resume_from_id:
+                    dd = os.path.join(PROJECT_DIR, 'logs', '44k', 'diffusion', f'task_{root_id}')
+                    if os.path.isdir(dd):
+                        for f in os.listdir(dd):
+                            if f.startswith('model_') and f.endswith('.pt'):
+                                start_step = max(start_step, int(''.join(c for c in f if c.isdigit()) or 0))
+                progress = info['current_step'] - start_step
+                if progress > 0 and elapsed_secs > 0:
+                    speed = progress / elapsed_secs
+                    info['eta'] = _format_eta(int((diff_total_steps - info['current_step']) / max(speed, 1e-6)))
     else:
-        steps = re.findall(r'(?:Global )?[Ss]tep[:\s]*(\d+)', log_content)
         total_steps = active.total_steps or 0
-        if steps:
-            info['current_step'] = min(int(steps[-1]), total_steps) if total_steps else int(steps[-1])
+        pairs = _parse_step_times(log_content)
+        if pairs:
+            info['current_step'] = min(pairs[-1][1], total_steps) if total_steps else pairs[-1][1]
             info['total_steps'] = total_steps
             if total_steps > 0:
                 info['pct'] = min(int(info['current_step'] / total_steps * 100), 99)
                 if info['current_step'] > 0 and elapsed_secs > 0:
-                    # 续训起点：链上原始任务的 checkpoint 步数（本任务新增步数才算速度，
-                    # 否则恢复的 3000 步会虚增速度，ETA 秒变 1 分钟）
-                    start_step = 0
-                    src_id = getattr(active, 'resume_from_id', None)
-                    if src_id:
-                        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{src_id}')
-                        if os.path.isdir(td):
-                            for f in os.listdir(td):
-                                if f.startswith('G_') and f.endswith('.pth'):
-                                    start_step = max(start_step, int(''.join(c for c in f if c.isdigit()) or 0))
-                    progress = info['current_step'] - start_step
-                    speed = progress / elapsed_secs if progress > 0 else 0
-                    info['eta'] = _format_eta(int((total_steps - info['current_step']) / max(speed, 1e-6)))
+                    # 近期速度：最近两个带时间戳的 step 点，避免全程平均被预处理/排队时间拖低
+                    if len(pairs) >= 2:
+                        t0, s0 = pairs[-2]
+                        t1, s1 = pairs[-1]
+                        if t1 < t0:
+                            t1 += 86400
+                        dt = max(t1 - t0, 1)
+                        ds = s1 - s0
+                        if ds > 0:
+                            speed = ds / dt
+                            info['eta'] = _format_eta(int((total_steps - info['current_step']) / max(speed, 1e-6)))
         elif info['stage'] == 'features':
             pcts = re.findall(r'(\d+)%\|', log_content)
             if pcts:
@@ -2010,12 +2053,15 @@ def _parse_training_log(active):
         elif info['stage'] == 'unzip':
             info['pct'] = 2
 
-    for line in log_content.split('\n'):
+    for line in log_content.split('\n') + (diff_extra or '').split('\n'):
         m = re.search(r'Losses: \[([^\]]+)\]', line)
         if m:
             vals = [float(x.strip()) for x in m.group(1).split(',')]
             if len(vals) >= 2:
                 info['loss_data'].append({'g': round(vals[1], 4), 'd': round(vals[0], 4)})
+        m3 = re.search(r'\| loss: ([\d.eE+-]+) .*\| step: (\d+)', line)
+        if m3:
+            info['loss_data'].append({'diff': round(float(m3.group(1)), 4)})
         m2 = re.search(r'Eval Losses: \[([^\]]+)\], step: (\d+)', line)
         if m2:
             info['eval_mel'] = round(float(m2.group(1)), 4)
@@ -2234,12 +2280,20 @@ def train_resume(tid):
     if not src or src.user_id != current_user.id:
         abort(404)
     chain_id = src.resume_from_id or src.id
-    td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{chain_id}')
     latest_step = 0
-    if os.path.isdir(td):
-        for f in os.listdir(td):
-            if f.startswith('G_') and f.endswith('.pth'):
-                latest_step = max(latest_step, int(''.join(c for c in f if c.isdigit()) or 0))
+    is_diff = src.model_type == 'diffusion'
+    if is_diff:
+        dd = os.path.join(PROJECT_DIR, 'logs', '44k', 'diffusion', f'task_{chain_id}')
+        if os.path.isdir(dd):
+            for f in os.listdir(dd):
+                if f.startswith('model_') and f.endswith('.pt'):
+                    latest_step = max(latest_step, int(''.join(c for c in f if c.isdigit()) or 0))
+    else:
+        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{chain_id}')
+        if os.path.isdir(td):
+            for f in os.listdir(td):
+                if f.startswith('G_') and f.endswith('.pth'):
+                    latest_step = max(latest_step, int(''.join(c for c in f if c.isdigit()) or 0))
     if latest_step <= 0:
         flash(f'任务 #{tid} 没有可用 checkpoint，无法续训', 'danger')
         return redirect(url_for('task_list'))
@@ -2248,15 +2302,19 @@ def train_resume(tid):
         params = json.loads(src.params_json or '{}')
     except (json.JSONDecodeError, TypeError):
         params = {}
-    base = src.total_steps or 4000
-    target_steps = request.form.get('target_steps', type=int) or 0
-    if target_steps > 0:
-        if target_steps <= latest_step:
-            flash(f'续训目标步数 {target_steps} 必须大于当前 checkpoint 的 {latest_step} 步', 'danger')
-            return redirect(url_for('task_list'))
-        total_steps = target_steps
+    if is_diff:
+        # 扩散续训：复用扩散配置（epochs 等），总步数对扩散无意义
+        total_steps = src.total_steps or 0
     else:
-        total_steps = max(base, latest_step + base)
+        base = src.total_steps or 4000
+        target_steps = request.form.get('target_steps', type=int) or 0
+        if target_steps > 0:
+            if target_steps <= latest_step:
+                flash(f'续训目标步数 {target_steps} 必须大于当前 checkpoint 的 {latest_step} 步', 'danger')
+                return redirect(url_for('task_list'))
+            total_steps = target_steps
+        else:
+            total_steps = max(base, latest_step + base)
     log_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{int(time.time())}')
     os.makedirs(log_dir, exist_ok=True)
 
@@ -2275,7 +2333,10 @@ def train_resume(tid):
     )
     db.session.add(task)
     db.session.commit()
-    flash(f'已创建续训任务 #{task.id}：从 checkpoint {latest_step} 步继续，目标 {total_steps} 步', 'success')
+    if is_diff:
+        flash(f'已创建扩散续训任务 #{task.id}：从扩散 checkpoint {latest_step} 步继续', 'success')
+    else:
+        flash(f'已创建续训任务 #{task.id}：从 checkpoint {latest_step} 步继续，目标 {total_steps} 步', 'success')
     return redirect(url_for('task_list'))
 
 
@@ -2394,6 +2455,13 @@ def train_stop():
         diff_txt = '，扩散模型已保存' if diff_latest else ''
         model_txt = '，已注册到模型列表' if (latest and task.model_type != 'diffusion') else ''
         flash(f'训练已停止{step_txt}{model_txt}{diff_txt}，可直接推理测试', 'success')
+        # 停止即完成（扩散训练正常流程是手动停止）：发完成邮件
+        try:
+            if task.user and task.user.email_notify:
+                from notifier import notify_train_complete
+                notify_train_complete(task, os.environ.get('SSVC_SERVER_URL', 'http://127.0.0.1:5000'))
+        except Exception:
+            pass
     train_process = None
     return redirect(url_for('task_list'))
 

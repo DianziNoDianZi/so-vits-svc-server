@@ -31,7 +31,12 @@ def notify_train_complete(task, server_url):
     user = task.user
     if not user or not user.email_notify or not user.email:
         return False
-    status_cn = '成功' if task.status == 'done' else '失败'
+    if task.status == 'done':
+        status_cn = '成功'
+    elif task.status == 'stopped':
+        status_cn = '已停止'
+    else:
+        status_cn = '失败'
     model_link = f'{server_url}/train/result/{task.id}' if task.model_path else '无'
     cfg_link = f'{server_url}/train/result/{task.id}?config=1' if task.config_path else '无'
     diff_link = f'{server_url}/train/result/{task.id}?diff=1' if task.diff_model_path else '无'
@@ -89,7 +94,10 @@ def notify_inference_complete(task, server_url):
     if not user or not user.infer_notify or not user.email:
         return False
     status_cn = '成功' if task.status == 'done' else '失败'
-    model_name = task.config.model.name if task.config and task.config.model else '-'
+    try:
+        model_name = task.config.model.name if task.config and task.config.model else '-'
+    except Exception:
+        model_name = '-'
     result_link = f'{server_url}/tasks/{task.id}/result' if task.result_filename else '无'
     body = f"""推理任务 {status_cn}
 
