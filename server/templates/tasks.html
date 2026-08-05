@@ -213,21 +213,17 @@ function askResumeStep(form, ckptStep) {
 
     runningTasks.forEach(function(node) {
         var id = node.getAttribute('data-task-id');
-        var es = new EventSource('/api/tasks/' + id + '/stream');
-        es.addEventListener('progress', function(e) {
-            var d = JSON.parse(e.data);
-            var msg = document.getElementById('tmsg-' + id);
-            if (msg) msg.textContent = d.progress_msg || '';
-            setBar(id, d.pct);
-        });
-        es.addEventListener('done', function(e) {
-            es.close();
-            done();
-        });
-        es.onerror = function() {
-            es.close();
-            done();
-        };
+        var timer = setInterval(function() {
+            fetch('/api/tasks/' + id + '/status').then(function(r){ return r.json(); }).then(function(d) {
+                var msg = document.getElementById('tmsg-' + id);
+                if (msg) msg.textContent = d.progress_msg || '';
+                setBar(id, d.pct);
+                if (d.status === 'done' || d.status === 'failed' || d.status === 'stopped') {
+                    clearInterval(timer);
+                    done();
+                }
+            }).catch(function(){});
+        }, 3000);
     });
 
     runningTrains.forEach(function(node) {
