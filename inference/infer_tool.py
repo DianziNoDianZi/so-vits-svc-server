@@ -175,20 +175,18 @@ class Svc(object):
             self.volume_extractor = utils.Volume_Extractor(self.diffusion_args.data.block_size)
             
         if os.path.exists(cluster_model_path):
-            if self.feature_retrieval:
-                try:
-                    with open(cluster_model_path, "rb") as f:
-                        self.cluster_model = pickle.load(f)
-                    self.big_npy = None
-                    self.now_spk_id = -1
-                except Exception:
-                    # 文件不是 faiss 检索索引（可能是 kmeans 聚类模型），回退聚类模式
-                    self.feature_retrieval = False
-                    self.cluster_model = cluster.get_cluster_model(cluster_model_path)
-            else:
+            # 加载方式由文件格式决定：先试 pickle（faiss 检索索引），失败再当 kmeans 聚类模型。
+            # 不能由 cluster_ratio 决定——ratio=0 时模型仍可能挂了 faiss 索引，走 kmeans 会崩。
+            try:
+                with open(cluster_model_path, "rb") as f:
+                    self.cluster_model = pickle.load(f)
+                self.big_npy = None
+                self.now_spk_id = -1
+            except Exception:
+                self.feature_retrieval = False
                 self.cluster_model = cluster.get_cluster_model(cluster_model_path)
         else:
-            self.feature_retrieval=False
+            self.feature_retrieval = False
 
         if self.shallow_diffusion :
             self.nsf_hifigan_enhance = False
