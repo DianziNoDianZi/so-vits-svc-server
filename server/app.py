@@ -2278,6 +2278,7 @@ def train_submit():
         except: return default
 
     resume_from = _int('resume_from', 0)
+    quick_chain = _int('quick_resume_chain', 0)
     chain_id = 0
     resume_latest = 0
     if resume_from:
@@ -2295,6 +2296,16 @@ def train_submit():
                 if f.startswith('G_') and f.endswith('.pth'):
                     resume_latest = max(resume_latest, int(''.join(c for c in f if c.isdigit()) or 0))
         print(f'[train_submit] 续训源: 任务 {resume_from} -> 数据目录 task_{chain_id}', flush=True)
+    elif quick_chain and (not f or not f.filename):
+        # 快速恢复：链任务记录可能已被清理，直接用数据目录续训
+        chain_id = quick_chain
+        dataset_zip = request.form.get('quick_dataset_zip', '').strip()
+        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{chain_id}')
+        if os.path.isdir(td):
+            for ff in os.listdir(td):
+                if ff.startswith('G_') and ff.endswith('.pth'):
+                    resume_latest = max(resume_latest, int(''.join(c for c in ff if c.isdigit()) or 0))
+        print(f'[train_submit] 快速恢复: 数据目录 task_{chain_id}, checkpoint {resume_latest}', flush=True)
     else:
         if not f or not f.filename:
             flash('请上传数据集 zip', 'danger')
