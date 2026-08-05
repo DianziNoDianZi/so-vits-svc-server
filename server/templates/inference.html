@@ -103,39 +103,38 @@ document.addEventListener('DOMContentLoaded', function() {
                                accept=".wav,.mp3,.flac,.m4a" required>
                     </div>
 
-                    <div class="row">
-                        <div class="col-6 mb-2">
-                            <label class="form-label" style="font-size:13px;">F0 预测器</label>
-                            <select name="f0_predictor" class="form-select form-select-sm bg-dark text-light border-secondary">
-                                <option value="rmvpe">rmvpe (推荐)</option>
-                                <option value="pm">pm (快速)</option>
-                                <option value="harvest">harvest</option>
-                                <option value="crepe">crepe (准但慢)</option>
-                                <option value="dio">dio</option>
-                                <option value="fcpe">fcpe</option>
-                            </select>
-                        </div>
-                        <div class="col-6 mb-2">
-                            <label class="form-label" style="font-size:13px;">变调 (半音)</label>
-                            <input type="number" name="vc_transform" class="form-control form-control-sm bg-dark text-light border-secondary" value="0" min="-24" max="24">
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col-6 mb-2">
-                            <label class="form-label" style="font-size:13px;">浅扩散 k_step</label>
-                            <input type="number" name="k_step" class="form-control form-control-sm bg-dark text-light border-secondary" value="100" min="0" max="1000">
-                        </div>
-                        <div class="col-6 mb-2">
-                            <label class="form-label" style="font-size:13px;">噪声</label>
-                            <input type="number" name="noise_scale" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.4" min="0" max="1" step="0.1">
-                        </div>
-                    </div>
-
                     <div class="mb-2">
-                        <a data-bs-toggle="collapse" href="#infAdvParams" role="button" class="text-secondary" style="font-size:13px;">⚙ 高级参数</a>
+                        <a data-bs-toggle="collapse" href="#infAdvParams" role="button" class="text-secondary" style="font-size:13px;">⚙ 参数（默认使用所选配置的值，点开可临时覆盖）</a>
                     </div>
                     <div class="collapse" id="infAdvParams">
                         <div class="card card-body bg-dark border-secondary p-2 mb-3">
+                            <div class="row">
+                                <div class="col-6 mb-2">
+                                    <label class="form-label" style="font-size:13px;">F0 预测器</label>
+                                    <select name="f0_predictor" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                        <option value="rmvpe">rmvpe (推荐)</option>
+                                        <option value="pm">pm (快速)</option>
+                                        <option value="harvest">harvest</option>
+                                        <option value="crepe">crepe (准但慢)</option>
+                                        <option value="dio">dio</option>
+                                        <option value="fcpe">fcpe</option>
+                                    </select>
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <label class="form-label" style="font-size:13px;">变调 (半音)</label>
+                                    <input type="number" name="vc_transform" class="form-control form-control-sm bg-dark text-light border-secondary" value="0" min="-24" max="24">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-6 mb-2">
+                                    <label class="form-label" style="font-size:13px;">浅扩散 k_step</label>
+                                    <input type="number" name="k_step" class="form-control form-control-sm bg-dark text-light border-secondary" value="100" min="0" max="1000">
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <label class="form-label" style="font-size:13px;">噪声</label>
+                                    <input type="number" name="noise_scale" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.4" min="0" max="1" step="0.1">
+                                </div>
+                            </div>
                             <div class="row">
                                 <div class="col-6 mb-2">
                                     <label class="form-label" style="font-size:13px;">聚类比例</label>
