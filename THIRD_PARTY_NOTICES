@@ -34,5 +34,9 @@ onnx  (Apache-2.0)                          https://onnx.ai
 matplotlib  (PSF)                           https://matplotlib.org
 psutil  (BSD-3-Clause)                      https://github.com/giampaolo/psutil
 
+Frontend libraries (vendored locally under server/static/):
+Chart.js  (MIT)                             https://www.chartjs.org
+Bootstrap  (MIT)                            https://getbootstrap.com
+
 If you believe a dependency is missing from this list, please open an issue
 in the repository.

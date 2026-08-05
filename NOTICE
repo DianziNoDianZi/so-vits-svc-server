@@ -12,20 +12,27 @@ Derivative work license: AGPL-3.0 (see LICENSE).
 
 Upstream-derived files that were modified (per AGPL-3.0 section 5):
 
-  * train.py                          - CPU training support, max_steps/auto_stop,
-                                        validation-loss logging
-  * train_diff.py                     - config handling adjustments
-  * inference/infer_tool.py           - diffusion config existence check fix
-  * utils.py                          - encoding / compatibility fixes
-  * preprocess_flist_config.py        - encoding fixes
-  * preprocess_hubert_f0.py           - encoding fixes
-  * diffusion/data_loaders.py         - encoding fixes
-  * diffusion/logger/saver.py         - encoding fixes
-  * diffusion/logger/utils.py         - encoding fixes
-  * cluster/train_cluster.py          - encoding fixes
-  * configs_template/config_template.json      - project defaults
+  * models.py                          - added RVC-style lightweight generator
+                                         (SynthesizerTrnRvc) and RVC-Flow variant
+                                         (SynthesizerTrnRvcFlow, A1/A2), arch_name tags
+  * train.py                           - CPU training support, max_steps/auto_stop,
+                                         validation-loss logging, arch selection,
+                                         discriminator LR scaling, RVC-Flow KL handling
+  * train_diff.py                      - config handling adjustments
+  * inference/infer_tool.py            - diffusion config existence check fix, arch-aware
+                                         model loading, torch.compile, retrieval mmap
+  * utils.py                           - encoding / compatibility fixes, checkpoint
+                                         architecture validation (save/load arch tag)
+  * preprocess_flist_config.py         - encoding fixes
+  * preprocess_hubert_f0.py            - encoding fixes, F0 median smoothing,
+                                         low-energy-frame unvoiced enhancement
+  * diffusion/data_loaders.py          - encoding fixes
+  * diffusion/logger/saver.py          - encoding fixes
+  * diffusion/logger/utils.py          - encoding fixes
+  * cluster/train_cluster.py           - encoding fixes
+  * configs_template/config_template.json      - project defaults (arch / d_lr_scale / num_workers)
   * configs_template/diffusion_template.yaml   - project defaults
-  * requirements.txt                  - dependency pins/mirror adjustments
+  * requirements.txt                   - dependency pins/mirror adjustments
   * .gitignore / .gitattributes / README.md    - project configuration/docs
 
 New files (server web app, workers, deploy scripts, templates) are also

@@ -49,7 +49,8 @@ def migrate_db():
     cols = [c['name'] for c in inspector.get_columns('training_task')]
     train_cols = [('params_json', 'TEXT'), ('diff_model_path', 'VARCHAR(500)'),
                   ('config_path', 'VARCHAR(500)'), ('diff_config_path', 'VARCHAR(500)'),
-                  ('resume_from_id', 'INTEGER')]
+                  ('resume_from_id', 'INTEGER'),
+                  ('anomaly_token', 'VARCHAR(64)'), ('anomaly_state', 'VARCHAR(20)')]
     for col, typ in train_cols:
         if col not in cols:
             db.session.execute(sa.text(f'ALTER TABLE training_task ADD COLUMN {col} {typ}'))
@@ -1821,6 +1822,51 @@ def train_worker_daemon():
 
                         threading.Thread(target=_progress_reporter, daemon=True).start()
 
+                    # 训练异常检测：判别器压制 / NaN，发邮件附确认链接
+                    if _rep_user and _rep_user.email_notify:
+                        _task_id2 = task.id
+
+                        def _anomaly_watchdog():
+                            while True:
+                                time.sleep(60)
+                                try:
+                                    with app.app_context():
+                                        t = db.session.get(TrainingTask, _task_id2)
+                                        if not t or t.status != 'running':
+                                            break
+                                        info = _parse_training_log(t)
+                                        ld = info.get('loss_data', [])
+                                        if len(ld) < 10:
+                                            continue
+                                        recent = ld[-20:]
+                                        kind, detail = None, ''
+                                        if any(('g' in x and x['g'] != x['g']) or ('d' in x and x['d'] != x['d'])
+                                               for x in recent):
+                                            kind = 'nan_loss'
+                                            detail = '检测到 NaN Loss，训练可能已经发散'
+                                        else:
+                                            gs = [x.get('g') for x in recent if x.get('g') is not None]
+                                            ds = [x.get('d') for x in recent if x.get('d') is not None]
+                                            if len(gs) >= 10 and len(ds) >= 10:
+                                                g_avg = sum(gs) / len(gs)
+                                                d_avg = sum(ds) / len(ds)
+                                                if d_avg < 0.6 and g_avg > 3.0:
+                                                    kind = 'disc_pressed'
+                                                    detail = f'最近 {len(recent)} 个点：D 均值 {d_avg:.3f}，G 均值 {g_avg:.3f}'
+                                        if kind and t.anomaly_state != 'pending':
+                                            token = uuid.uuid4().hex[:32]
+                                            t.anomaly_token = token
+                                            t.anomaly_state = 'pending'
+                                            db.session.commit()
+                                            from notifier import notify_train_anomaly
+                                            notify_train_anomaly(
+                                                t, os.environ.get('SSVC_SERVER_URL', 'http://127.0.0.1:5000'),
+                                                token, kind, detail)
+                                except Exception:
+                                    pass
+
+                        threading.Thread(target=_anomaly_watchdog, daemon=True).start()
+
                     result = tr(
                         task_id=task.id,
                         speaker=task.speaker,
@@ -2493,6 +2539,28 @@ def train_result(tid):
     if not os.path.exists(path):
         abort(404)
     return send_file(path, as_attachment=True)
+
+
+@app.route('/train/anomaly/<int:tid>/<token>')
+def train_anomaly_confirm(tid, token):
+    """训练异常邮件中的确认链接：continue=继续训练，stop=停止训练。"""
+    task = db.session.get(TrainingTask, tid)
+    if not task or not task.anomaly_token or task.anomaly_token != token:
+        abort(404)
+    action = request.args.get('action', '')
+    if action == 'continue':
+        task.anomaly_state = 'confirmed'
+        db.session.commit()
+        flash(f'已确认继续训练 #{tid}（若再次出现异常会重新提醒）', 'success')
+    elif action == 'stop':
+        from train_worker import stop as stop_train
+        stop_train()
+        task.anomaly_state = 'stopped'
+        db.session.commit()
+        flash(f'已请求停止训练 #{tid}，checkpoint 会自动保存', 'warning')
+    else:
+        abort(400)
+    return redirect(url_for('task_list'))
 
 
 @app.route('/train-tasks/<int:tid>/delete', methods=['POST'])

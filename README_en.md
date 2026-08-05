@@ -14,15 +14,20 @@ This project is a derivative of [so-vits-svc](https://github.com/svc-develop-tea
 
 ## Features
 
-- **Inference**: upload model + audio → SVC conversion; shallow diffusion (k_step) for polishing
-- **Training**: dataset zip → queued training; **resume** from checkpoints (main model and diffusion)
+- **Inference**: upload model + audio → SVC conversion; shallow diffusion (k_step); tune every parameter (F0 / enhancer / retrieval / transposition) right on the inference page
+- **Feature retrieval**: faiss index built automatically after training; `cluster_ratio` mixing at inference for more stable timbre
+- **Training**: dataset zip → queued training; **resume to a target step** (main model and diffusion, one-click from the task list)
+- **Multiple architectures**: SoVITS v1 / RVC direct / RVC-Flow (lightweight TransformerFlow, A1/A2 switchable), selectable on the training page
 - **Stop & audition**: stop training anytime; the current checkpoint is saved as a model for immediate inference
-- **Monitoring**: live logs / loss curves / **validation loss** (overfitting check) / ETA
+- **Monitoring**: SSE live progress, G/D loss curves (separate diffusion curve), **validation loss** (overfitting check), recent-speed ETA
+- **Anomaly email confirmation**: when the discriminator crushes the generator or loss goes NaN, an email with continue/stop confirmation links is sent
 - **Precise cleanup**: per-task / per-model / per-dataset cleanup with mis-deletion warnings
-- **File manager**: download / delete models, configs, results and datasets from the web UI
+- **File manager**: paginated browsing, batch delete, download models / configs / results / datasets
 - **Pretrained assets page**: upload ContentVec, NSF-HiFiGAN, base models G_0/D_0 etc.
-- **Email notifications**: training-complete emails (configurable SMTP)
-- Security: CSRF protection, login rate limiting, path traversal checks, persistent session key
+- **Email notifications**: training complete / progress / anomaly and inference complete (configurable SMTP)
+- **Performance**: inference model LRU cache (zero load cost on repeated inference), GPU torch.compile
+- **Ops**: one-click git pull + graceful restart in settings; training parameter presets
+- Security: CSRF protection, login rate limiting, path traversal checks, persistent session key, checkpoint architecture validation
 
 ## Quick Start
 

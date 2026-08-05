@@ -86,6 +86,8 @@ class TrainingTask(db.Model):
     error_msg = db.Column(db.String(1000), nullable=True)
     log_path = db.Column(db.String(500), nullable=True)
     resume_from_id = db.Column(db.Integer, nullable=True)
+    anomaly_token = db.Column(db.String(64), nullable=True)   # 训练异常确认 token
+    anomaly_state = db.Column(db.String(20), default='')      # '' / pending / confirmed
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     done_at = db.Column(db.DateTime, nullable=True)
 

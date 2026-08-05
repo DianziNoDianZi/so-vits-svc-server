@@ -112,3 +112,36 @@ def notify_inference_complete(task, server_url):
     return send(user.email, user.smtp_user, user.smtp_pwd,
                 f'[SoVITS] 推理 {status_cn}: {model_name}', body,
                 host=user.smtp_host or None, port=user.smtp_port or None)
+
+
+def notify_train_anomaly(task, server_url, token, kind, detail=''):
+    """训练异常提醒：邮件附确认继续/停止链接。"""
+    user = task.user if task else None
+    if not user or not user.email_notify or not user.email:
+        return False
+    kind_cn = {'disc_pressed': '判别器完全压制生成器',
+               'nan_loss': '训练 Loss 出现 NaN'}.get(kind, kind)
+    cont = f'{server_url}/train/anomaly/{task.id}/{token}?action=continue'
+    stop = f'{server_url}/train/anomaly/{task.id}/{token}?action=stop'
+    body_lines = [
+        f'训练异常提醒: {task.speaker}',
+        '',
+        f'任务: #{task.id} ({task.model_type})',
+        f'检测到: {kind_cn}',
+        detail or '',
+        f'当前步数: {task.total_steps or "?"}',
+        '',
+        '请确认如何处理：',
+        '',
+        '→ 确认继续训练（忽略该异常）:',
+        cont,
+        '',
+        '→ 停止训练（保存当前 checkpoint）:',
+        stop,
+        '',
+        '--- So-VITS-SVC 推理服务 ---',
+    ]
+    return send(user.email, user.smtp_user, user.smtp_pwd,
+                f'[SoVITS] 训练异常: {task.speaker} ({kind_cn})',
+                '\n'.join(body_lines),
+                host=user.smtp_host or None, port=user.smtp_port or None)
