@@ -148,6 +148,103 @@ sudo bash deploy_linux.sh
 **扩散：** 主模型训好后，任务列表点"训扩散"直接进入扩散训练（复用数据/特征），
 完成后把扩散模型挂到主模型上，k_step 100~300 推理。
 
+## 训练参数说明
+
+训练页可配置的参数及其含义、建议值：
+
+| 参数 | 含义 | 建议 |
+|------|------|------|
+| `total_steps` | 总训练步数（续训时为目标总步数） | 小数据集 3000~10000；大数据集按需加 |
+| `batch_size` | 每批样本数 | GPU 4~8；CPU 1~4（显存/内存小就调低） |
+| `keep_ckpts` | 保留最近几个 checkpoint | 3（磁盘紧张可 1~2） |
+| `speech_encoder` | 特征编码器 | `vec768l12`（推荐）；数据量大可试 WavLM/Whisper |
+| `f0_predictor` | F0 提取器 | `harvest` 最稳（训练用）；`dio` 快但质量差 |
+| `learning_rate` | 学习率 | 0.0001（一般不用动） |
+| `lr_decay` | 学习率衰减 | 0.999~0.999875 |
+| `segment_size` | 训练切片长度（帧） | 10240（内存小调低） |
+| `auto_stop` | loss 连续 N 步无改善自动停 | 200（0=关闭） |
+| `arch` | 模型架构 | v1 / rvc / rvc-flow（见"模型架构"章节） |
+| `d_lr_scale` | 判别器 lr 缩放（前 1000 步） | rvc 系列建议 0.5，v1 用 1.0 |
+| `flow_mode` | rvc-flow 模式 | `a2`（推荐） |
+
+**扩散训练参数**（训扩散时）：`diff_epochs`（默认 100000，靠 loss/停止控制）、`diff_timesteps`（1000）、`diff_kstep`（浅扩散最大步，0=全量）、`diff_layers`/`diff_chans`/`diff_hidden`（网络容量，内存小就调小）、`diff_lr`、`diff_decay_step`、`diff_gamma`、`diff_amp`（fp32/fp16/bf16）。
+
+## 推理参数说明
+
+推理页可直接覆盖配置默认值（参数默认折叠）：
+
+| 参数 | 含义 | 建议 |
+|------|------|------|
+| `f0_predictor` | F0 提取器 | `pm`/`harvest`（CPU 快）；`crepe` 最准但慢数倍 |
+| `k_step` | 浅扩散步数 | 挂了扩散模型时 100~300；无扩散填 0 |
+| `cluster_ratio` | 特征检索混合比例 | 0.2~0.5（需模型挂检索索引，无索引自动禁用） |
+| `vc_transform` | 变调（半音） | 0 |
+| `slice_db` | 切片阈值（dB） | -40；音频切太碎时调 -30~-35 |
+| `noise_scale` | 生成噪声 | 0.4；声音毛糙可调 0.25 |
+| `pad_seconds` | 段间填充 | 0.5 |
+| `auto_f0` | 自动预测 F0 | 一般关闭 |
+| `enhancer` | NSF 增强 | 可选 |
+| `second_encoding` | 二次编码 | 一般关闭 |
+| `loudness_envelope` | 响度包络 | 0~1 |
+| `output_format` | 输出格式 | wav / mp3 / flac |
+
+## 部署与运维
+
+**Linux 服务管理（systemd）**
+
+```bash
+systemctl status ssvc          # 查看状态
+systemctl restart ssvc         # 重启（更新代码后必须）
+journalctl -u ssvc -n 100      # 查看日志（推理/训练报错在这里）
+```
+
+**更新代码**
+
+- 设置页"系统更新"按钮：git pull + 等任务结束自动重启
+- 手动：`cd /opt/so-vits-svc && git pull gitee master && systemctl restart ssvc`
+
+**环境变量**
+
+| 变量 | 作用 | 默认 |
+|------|------|------|
+| `PORT` | 服务端口 | 5000 |
+| `SECRET_KEY` | 会话密钥（自动持久化） | 自动生成 |
+| `DATABASE_URL` | 数据库路径 | server/data.db |
+| `INFERENCE_TASK_TIMEOUT` | 推理超时（秒） | 21600 |
+| `TRAIN_TIMEOUT` | 训练墙钟超时（秒，0=不限） | 0 |
+| `INFERENCE_MODEL_CACHE` | 推理模型缓存数量 | 3（内存小调 1） |
+| `SSVC_COMPILE` | GPU torch.compile（0 关闭） | 1 |
+| `SSVC_SERVER_URL` | 邮件/页面链接地址 | 自动探测 |
+
+**数据安全**：模型权重、数据库、密钥、日志均不入 git（见 .gitignore）。更新代码不会覆盖 `uploads/`、`pretrain/`、`data.db`。
+
+## 常见问题（FAQ）
+
+**训练出的声音有电音/金属音/沙哑？**
+- F0 预测器问题：训练用 `dio` 容易导致沙哑，改用 `harvest` 重训
+- 训练不足或过拟合：小数据集训过头反而变差，找到合适步数（看验证 mel）
+- 浅扩散修音：训扩散模型挂上，推理 `k_step` 100~300，能压掉大部分高频毛刺
+- 推理 `noise_scale` 调低到 0.25 也能缓解
+
+**推理很慢？**
+- CPU 上 `crepe` F0 极慢，换 `pm`/`harvest`
+- `k_step` 越高越慢，按需调低
+- 长音频切成 1~2 分钟片段分别推理
+
+**报"模型架构不匹配"？**
+checkpoint 和配置的架构不一致（v1/rvc/rvc-flow 混用）。用匹配的配置，或重新训练。
+
+**推理任务一直 running / 进度不动？**
+- 模型加载阶段（CPU 上 1~2 分钟）无进度是正常的
+- 任务可点"停止"后重新提交
+- 服务重启后排队任务会自动恢复
+
+**服务器内存小（OOM）？**
+调低 `INFERENCE_MODEL_CACHE=1`，推理配置 `cluster_ratio=0`，训练 `batch_size` 调低。
+
+**cluster 相关报错？**
+训练自动生成的 `*_cluster.pth` 是 faiss 检索索引，加载器会自动识别；手动上传 kmeans 模型也兼容。
+
 ## 目录结构
 
 ```

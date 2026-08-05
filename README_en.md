@@ -121,6 +121,61 @@ The script installs ffmpeg / libsndfile / cmake and other system deps, and sets 
 
 **Diffusion:** after the main model is trained, click "Train diffusion" in the task list (reuses data/features); attach the diffusion model to the main model and infer with k_step 100~300.
 
+## Training Parameters
+
+| Parameter | Meaning | Suggestion |
+|-----------|---------|------------|
+| `total_steps` | total training steps (target total when resuming) | 3000~10000 for small datasets |
+| `batch_size` | samples per batch | 4~8 GPU; 1~4 CPU |
+| `keep_ckpts` | number of checkpoints kept | 3 |
+| `speech_encoder` | feature encoder | `vec768l12` (default) |
+| `f0_predictor` | F0 extractor for training | `harvest` (most stable); avoid `dio` |
+| `learning_rate` / `lr_decay` | LR and decay | 0.0001 / 0.999~0.999875 |
+| `segment_size` | training slice length | 10240 (lower if memory tight) |
+| `auto_stop` | stop if loss stalls for N steps | 200 (0=off) |
+| `arch` | model architecture | v1 / rvc / rvc-flow (see Architecture section) |
+| `d_lr_scale` | discriminator LR scale (first 1000 steps) | 0.5 for rvc family, 1.0 for v1 |
+| `flow_mode` | rvc-flow mode | `a2` (recommended) |
+
+Diffusion training params: `diff_epochs`, `diff_timesteps` (1000), `diff_kstep` (0=full), `diff_layers/chans/hidden`, `diff_lr`, `diff_decay_step`, `diff_gamma`, `diff_amp`.
+
+## Inference Parameters
+
+| Parameter | Meaning | Suggestion |
+|-----------|---------|------------|
+| `f0_predictor` | F0 extractor | `pm`/`harvest` on CPU; `crepe` accurate but slow |
+| `k_step` | shallow diffusion steps | 100~300 with diffusion model; 0 without |
+| `cluster_ratio` | feature retrieval mix | 0.2~0.5 (needs retrieval index) |
+| `vc_transform` | transposition (semitones) | 0 |
+| `slice_db` | slicing threshold (dB) | -40; raise to -30~-35 if over-sliced |
+| `noise_scale` | generation noise | 0.4; 0.25 if harsh |
+| `pad_seconds` | segment padding | 0.5 |
+| `enhancer` / `second_encoding` / `loudness_envelope` | optional post-processing | usually off |
+| `output_format` | output format | wav / mp3 / flac |
+
+## Deployment & Ops
+
+```bash
+systemctl status ssvc          # status
+systemctl restart ssvc         # restart after code updates
+journalctl -u ssvc -n 100      # logs (inference/training errors)
+```
+
+Update: use the "System Update" button in settings (git pull + graceful restart), or manually `git pull gitee master && systemctl restart ssvc`.
+
+Env vars: `PORT` (5000), `INFERENCE_TASK_TIMEOUT` (21600s), `TRAIN_TIMEOUT` (0=unlimited), `INFERENCE_MODEL_CACHE` (3; lower if memory tight), `SSVC_COMPILE` (GPU torch.compile), `SSVC_SERVER_URL` (for email links).
+
+Data safety: weights, database, keys and logs never enter git (see .gitignore). Updates never overwrite `uploads/`, `pretrain/` or `data.db`.
+
+## FAQ
+
+- **Robotic/metallic/harsh output?** Use `harvest` F0 for training (not `dio`); watch for overfitting on small datasets; train a diffusion model and use k_step 100~300; lower noise_scale to 0.25.
+- **Inference too slow?** Avoid `crepe` on CPU; lower k_step; slice long audio into 1~2 min clips.
+- **"Model architecture mismatch" error?** Checkpoint and config architectures differ (v1/rvc/rvc-flow mixed); use matching config or retrain.
+- **Task stuck at running?** Model loading on CPU takes 1~2 min with no progress; you can stop and resubmit; queued tasks auto-recover after restart.
+- **OOM on small servers?** Set `INFERENCE_MODEL_CACHE=1`, `cluster_ratio=0`, lower training batch_size.
+- **Cluster-related errors?** Auto-generated `*_cluster.pth` is a faiss retrieval index; the loader auto-detects it and also accepts manually uploaded kmeans models.
+
 ## Directory Layout
 
 ```
