@@ -9,6 +9,7 @@ import sys
 import uuid
 import secrets
 import string
+import signal
 import queue as queue_module
 import multiprocessing as mp_module
 import sqlalchemy as sa
@@ -1087,6 +1088,9 @@ def task_worker():
             if not task:
                 continue
             try:
+                # 排队期间被用户停止的任务：跳过不投递
+                if task.status == 'stopped':
+                    continue
                 task.status = 'running'
                 task.progress_msg = '正在加载模型...'
                 db.session.commit()
@@ -1195,6 +1199,9 @@ def task_worker():
                     task.result_filename = result_name
                     task.status = 'done'
                     task.progress_msg = '推理完成'
+                elif result_err and '用户停止推理' in str(result_err):
+                    task.status = 'stopped'
+                    task.progress_msg = '已停止'
                 else:
                     task.status = 'failed'
                     task.error_msg = (result_err or '\n'.join(tail_lines))[-1000:]
@@ -1480,6 +1487,37 @@ def task_delete(task_id):
     db.session.delete(task)
     db.session.commit()
     flash('任务已删除', 'success')
+    return redirect(url_for('task_list'))
+
+
+@app.route('/tasks/<int:task_id>/stop', methods=['POST'])
+@login_required
+def task_stop(task_id):
+    """停止推理任务：运行中给 daemon 发中断信号（缓存保留），排队中直接标记停止。"""
+    task = db.session.get(Task, task_id)
+    if not task or task.user_id != current_user.id:
+        abort(404)
+    if task.status == 'running':
+        if inference_daemon_proc and inference_daemon_proc.is_alive():
+            try:
+                os.kill(inference_daemon_proc.pid, signal.SIGINT)
+            except Exception:
+                # Windows 或信号不可用时降级：直接结束 daemon（缓存丢失），ensure_worker 会自动重启
+                try:
+                    inference_daemon_proc.terminate()
+                except Exception:
+                    pass
+        task.progress_msg = '正在停止...'
+        db.session.commit()
+        flash('已请求停止推理任务（当前片段处理完即停）', 'warning')
+    elif task.status == 'pending':
+        task.status = 'stopped'
+        task.progress_msg = '已停止（未开始）'
+        task.done_at = datetime.utcnow()
+        db.session.commit()
+        flash('已停止排队中的推理任务', 'warning')
+    else:
+        flash('该任务不在运行中，无法停止', 'info')
     return redirect(url_for('task_list'))
 
 

@@ -229,6 +229,10 @@ def main(q, done_q, cache_size):
             finally:
                 os.chdir(old_cwd)
             success = True
+        except KeyboardInterrupt:
+            # 用户停止：中断当前推理，模型缓存保留，继续处理下一个任务
+            err = '用户停止推理'
+            success = False
         except Exception as e:
             import traceback
             err = traceback.format_exc()

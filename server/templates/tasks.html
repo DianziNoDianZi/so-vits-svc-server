@@ -84,6 +84,12 @@
                     {% if t.status == 'done' and t.result_filename %}
                     <a href="{{ url_for('task_result', task_id=t.id) }}" class="btn btn-success btn-sm">⬇ 下载</a>
                     {% endif %}
+                    {% if t.status in ('running', 'pending') %}
+                    <form method="POST" action="{{ url_for('task_stop', task_id=t.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('停止这个推理任务？运行中的任务会在当前片段处理完后停止')">停止</button>
+                    </form>
+                    {% endif %}
                     <form method="POST" action="{{ url_for('task_delete', task_id=t.id) }}" style="display:inline">
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('删除？')">删除</button>
