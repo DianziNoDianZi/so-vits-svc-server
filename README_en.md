@@ -31,6 +31,31 @@ This project is a derivative of [so-vits-svc](https://github.com/svc-develop-tea
 - **Ops**: one-click git pull + graceful restart in settings; training parameter presets
 - Security: CSRF protection, login rate limiting, path traversal checks, persistent session key, checkpoint architecture validation
 
+## Model Architectures
+
+On top of the original so-vits-svc (VITS structure), this project adds two self-developed lightweight architectures, selectable on the training page:
+
+| Architecture | Structure | Params | Notes |
+|--------------|-----------|--------|-------|
+| `sovits-v1` | TextEncoder + Flow + enc_q (original VITS) | ~52M | Best compatibility, interchangeable with community models |
+| `rvc` | feature-direct decoder (no TextEncoder / Flow) | ~15.5M | More stable and faster training, good timbre preservation, suits small datasets |
+| `rvc-flow` | lightweight TransformerFlow (A1 / A2) | ~16M | Higher quality ceiling, needs more data |
+
+**RVC direct (`arch: "rvc"`)**
+
+TextEncoder and Flow are removed; ContentVec features go through a single projection straight into the NSF-HiFiGAN decoder, with f0 injected by the decoder's harmonic source. About one-third the params of v1, training is more stable and converges faster, and it avoids KL instability of flow on small datasets.
+
+**RVC-Flow (`arch: "rvc-flow"`)**
+
+Adds a lightweight TransformerFlow on top of the direct path to enhance feature representation. Two modes:
+
+- `A1 feature-prior flow` (`flow_mode: "a1"`): flow transforms features forward, KL constrained to a standard-normal prior (for architecture comparison)
+- `A2 posterior flow` (`flow_mode: "a2"`, default): a tiny enc_q (1-layer WN) provides the posterior from the spectrogram, flow aligns it to the prior; more stable training
+
+**Checkpoint architecture validation**
+
+Checkpoints record an architecture tag on save; on load the tag is verified and mismatches fail loudly, preventing rvc weights from silently loading as rvc-flow (or vice versa) and corrupting the model. v1 base models (G_0/D_0) remain usable as initialization for the rvc family (shared decoder).
+
 ## Quick Start
 
 ### Windows (one-click)

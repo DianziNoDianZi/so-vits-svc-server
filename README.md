@@ -33,6 +33,31 @@
 -  **运维**：设置页一键 git pull + 优雅重启；训练页参数预设
 -  安全：CSRF 防护、登录限速、路径穿越防护、会话密钥持久化、checkpoint 架构校验
 
+## 模型架构
+
+在原版 so-vits-svc（VITS 结构）基础上，本项目新增了两套自研轻量架构，训练页可直接选择：
+
+| 架构 | 结构 | 参数量 | 特点 |
+|------|------|--------|------|
+| `sovits-v1` | TextEncoder + Flow + enc_q（原版 VITS） | ~52M | 兼容性最好，与社区模型互通 |
+| `rvc` | 特征直连解码器（无 TextEncoder / Flow） | ~15.5M | 训练更稳更快，音色保持好，适合小数据 |
+| `rvc-flow` | 轻量 TransformerFlow（A1 / A2） | ~16M | 音质上限更高，需要更多数据支撑 |
+
+**RVC 轻量直连（`arch: "rvc"`）**
+
+去掉 TextEncoder 和 Flow，ContentVec 特征经单层投影直接进入 NSF-HiFiGAN 解码器，f0 由解码器谐波源注入。参数量约为 v1 的三分之一，训练更稳定、收敛更快，也避免了 flow 在小数据集上 KL 不稳定导致的问题。
+
+**RVC-Flow（`arch: "rvc-flow"`）**
+
+在直连基础上加入轻量 TransformerFlow 增强特征表达，两种模式可切换：
+
+- `A1 特征先验流`（`flow_mode: "a1"`）：flow 正向变换特征，KL 约束到标准正态先验，用于架构对比
+- `A2 后验流`（`flow_mode: "a2"`，默认）：极小 enc_q（1 层 WN）从频谱提供后验，flow 做先验对齐，训练更稳
+
+**checkpoint 架构校验**
+
+checkpoint 保存时记录架构标签，加载时校验：架构不匹配直接报错，避免把 rvc 的权重静默加载成 rvc-flow（或反之）导致模型损坏。v1 底模（G_0/D_0）作为初始化权重仍可复用到 rvc 系列（解码器部分通用）。
+
 ## 快速开始
 
 ### Windows 本机（一键安装）
