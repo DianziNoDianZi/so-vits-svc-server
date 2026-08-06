@@ -76,6 +76,51 @@ PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, PROJECT_DIR)
 
 
+class OnnxGenerator:
+    """用 onnxruntime 跑主生成器，接口与 PyTorch net_g.infer 对齐。
+    采样噪声由外部生成传入（导出时已把 randn 移出图）。"""
+
+    def __init__(self, onnx_path, device):
+        import onnxruntime as ort
+        providers = (['CUDAExecutionProvider', 'CPUExecutionProvider']
+                     if device == 'cuda' else ['CPUExecutionProvider'])
+        self.sess = ort.InferenceSession(onnx_path, providers=providers)
+        self.device = device
+        self.inter_channels = 192
+        self.input_names = [i.name for i in self.sess.get_inputs()]
+        for inp in self.sess.get_inputs():
+            if inp.name == 'noise' and len(inp.shape) >= 2 and inp.shape[1]:
+                self.inter_channels = int(inp.shape[1])
+
+    def infer(self, c, f0, uv, g=None, predict_f0=False, noice_scale=0.35, seed=52468, vol=None):
+        import numpy as np
+        B, _D, T = c.shape
+        torch.manual_seed(seed)
+        noise = torch.randn(B, self.inter_channels, T)
+        if g is None:
+            g_np = np.zeros((B, 1), dtype=np.int64)
+        else:
+            g_np = np.asarray(g.detach().cpu().reshape(B, 1), dtype=np.int64)
+        vol_np = vol.detach().cpu().float().numpy() if vol is not None else np.zeros((B, T), dtype=np.float32)
+        feed = {}
+        for name in self.input_names:
+            if name == 'c':
+                feed[name] = c.detach().cpu().float().numpy()
+            elif name == 'f0':
+                feed[name] = f0.detach().cpu().float().numpy()
+            elif name == 'uv':
+                feed[name] = uv.detach().cpu().float().numpy()
+            elif name == 'g':
+                feed[name] = g_np
+            elif name == 'noise':
+                feed[name] = noise.numpy()
+            elif name == 'vol':
+                feed[name] = vol_np
+        inputs = feed
+        out = self.sess.run(['audio'], inputs)[0]
+        return torch.from_numpy(out), f0
+
+
 def _model_key(p):
     """模型缓存 key：结构与 Svc 构造相关的最小参数集合。"""
     return (
@@ -120,7 +165,7 @@ class ModelCache:
 def _build_svc(p, device):
     from inference.infer_tool import Svc
     _params = p.get('params') or {}
-    return Svc(
+    svc = Svc(
         net_g_path=p['model_path'],
         config_path=p['config_path'],
         device=device,
@@ -133,6 +178,15 @@ def _build_svc(p, device):
         spk_mix_enable=False,
         feature_retrieval=bool(_params.get('cluster_ratio', 0) > 0 and p.get('cluster_path')),
     )
+    # ONNX 生成器：模型旁存在 .onnx 时用 onnxruntime 推理，失败回退 PyTorch
+    onnx_path = p['model_path'] + '.onnx'
+    if os.path.exists(onnx_path):
+        try:
+            svc.net_g_ms = OnnxGenerator(onnx_path, device)
+            print(f'[daemon] 使用 ONNX 生成器: {os.path.basename(onnx_path)}', flush=True)
+        except Exception as e:
+            print(f'[daemon] ONNX 加载失败，回退 PyTorch: {e}', flush=True)
+    return svc
 
 
 def _run_inference(p, svc, device):

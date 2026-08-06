@@ -28,6 +28,7 @@
 -  **预训练页**：网页上传/管理 ContentVec、NSF-HiFiGAN、训练底模 G_0/D_0 等
 -  **邮件通知**：训练完成/进度/异常、推理完成自动发邮件（SMTP 可配置）
 -  **性能**：推理模型 LRU 缓存（同模型连续推理零加载开销）、GPU torch.compile
+-  **ONNX 加速**：主生成器可导出 ONNX，推理自动走 onnxruntime（动态 shape），失败自动回退 PyTorch
 -  **任务控制**：训练/推理任务均可随时停止（推理保留模型缓存，checkpoint 自动保存）
 -  **快速恢复**：训练停止后一键继续上次训练（TEMP 快照，可载入全参数修改）
 -  **运维**：设置页一键 git pull + 优雅重启；训练页参数预设
@@ -188,6 +189,14 @@ sudo bash deploy_linux.sh
 | `second_encoding` | 二次编码 | 一般关闭 |
 | `loudness_envelope` | 响度包络 | 0~1 |
 | `output_format` | 输出格式 | wav / mp3 / flac |
+
+**ONNX 导出**（可选，提升推理速度）：
+
+```bash
+python onnx_export_generator.py <模型.pth> <config.json> <输出.onnx>
+```
+
+导出后把 `.onnx` 放到模型同目录（`模型名.pth.onnx`），推理时自动用 onnxruntime 跑生成器；文件缺失或加载失败时自动回退 PyTorch，不影响原有推理。
 
 ## 部署与运维
 
