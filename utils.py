@@ -25,6 +25,35 @@ MATPLOTLIB_FLAG = False
 logging.basicConfig(stream=sys.stdout, level=logging.WARN)
 logger = logging
 
+
+class EMA:
+    """指数移动平均权重副本：训练时维护参数的 EMA，推理/验证时用更稳的 EMA 权重。
+    不动训练逻辑，只在每 ema_interval 步把当前参数并入 EMA。"""
+
+    def __init__(self, model, decay=0.999):
+        self.decay = decay
+        self.shadow = {}
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.detach().clone()
+
+    def update(self, model):
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if name in self.shadow and param.requires_grad:
+                    self.shadow[name].mul_(self.decay).add_(param.detach(), alpha=1.0 - self.decay)
+
+    def state_dict(self):
+        return {
+            'decay': self.decay,
+            'shadow': {k: v.clone() for k, v in self.shadow.items()},
+        }
+
+    def load_state_dict(self, sd):
+        if isinstance(sd, dict) and 'shadow' in sd:
+            self.decay = sd.get('decay', self.decay)
+            self.shadow = {k: v.clone() for k, v in sd['shadow'].items()}
+
 f0_bin = 256
 f0_max = 1100.0
 f0_min = 50.0
@@ -155,7 +184,7 @@ def get_speech_encoder(speech_encoder,device=None,**kargs):
         raise Exception("Unknown speech encoder")
     return speech_encoder_object 
 
-def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False):
+def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False, use_ema=False):
     assert os.path.isfile(checkpoint_path)
     checkpoint_dict = torch.load(checkpoint_path, map_location='cpu')
     # 架构校验：checkpoint 记录的 arch 与模型不匹配时直接报错（底模除外，允许复用解码器）
@@ -195,6 +224,23 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False
         model.module.load_state_dict(new_state_dict)
     else:
         model.load_state_dict(new_state_dict)
+    # EMA 副本：续训恢复状态；推理 use_ema=True 时直接用 EMA 权重覆盖参数
+    ema_sd = checkpoint_dict.get('ema')
+    if isinstance(ema_sd, dict) and 'shadow' in ema_sd:
+        if hasattr(model, 'ema') and model.ema is not None:
+            try:
+                model.ema.load_state_dict(ema_sd)
+            except Exception:
+                pass
+        if use_ema:
+            shadow = ema_sd.get('shadow', {})
+            target = model.module if hasattr(model, 'module') else model
+            for name, param in target.named_parameters():
+                if name in shadow:
+                    try:
+                        param.data.copy_(shadow[name].to(param.device))
+                    except Exception:
+                        pass
     print("load ")
     logger.info("Loaded checkpoint '{}' (iteration {})".format(
         checkpoint_path, iteration))
@@ -212,11 +258,16 @@ def save_checkpoint(model, optimizer, learning_rate, iteration, checkpoint_path)
     state_dict = model.module.state_dict()
   else:
     state_dict = model.state_dict()
+  ema_obj = getattr(model, 'ema', None)
+  if ema_obj is None and hasattr(model, 'module'):
+      ema_obj = getattr(model.module, 'ema', None)
   torch.save({'model': state_dict,
               'iteration': iteration,
-              'optimizer': optimizer.state_dict(),
+              'optimizer': optimizer.state_dict() if optimizer is not None else None,
               'learning_rate': learning_rate,
-              'arch': getattr(model, 'arch_name', 'v1')}, checkpoint_path)
+              'arch': getattr(model, 'arch_name', 'v1'),
+              'ema': ema_obj.state_dict() if ema_obj is not None else None},
+             checkpoint_path)
 
 def clean_checkpoints(path_to_models='logs/44k/', n_ckpts_to_keep=2, sort_by_time=True):
   """Freeing up space by deleting saved ckpts

@@ -166,6 +166,7 @@ sudo bash deploy_linux.sh
 | `arch` | 模型架构 | v1 / rvc / rvc-flow（见"模型架构"章节） |
 | `d_lr_scale` | 判别器 lr 缩放（前 1000 步） | rvc 系列建议 0.5，v1 用 1.0 |
 | `flow_mode` | rvc-flow 模式 | `a2`（推荐） |
+| `ema_decay` / `ema_interval` | EMA 权重衰减 / 更新间隔（推理用 EMA 更稳） | 0.999 / 100 |
 
 **扩散训练参数**（训扩散时）：`diff_epochs`（默认 100000，靠 loss/停止控制）、`diff_timesteps`（1000）、`diff_kstep`（浅扩散最大步，0=全量）、`diff_layers`/`diff_chans`/`diff_hidden`（网络容量，内存小就调小）、`diff_lr`、`diff_decay_step`、`diff_gamma`、`diff_amp`（fp32/fp16/bf16）。
 

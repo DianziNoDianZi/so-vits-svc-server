@@ -128,6 +128,9 @@ def run(rank, n_gpus, hps):
         hps.data.filter_length // 2 + 1,
         hps.train.segment_size // hps.data.hop_length,
         **hps.model).to(device)
+    # EMA 权重副本：不动训练逻辑，每 ema_interval 步并入一次，推理时可用更稳的 EMA 权重
+    ema_decay = float(getattr(hps.train, 'ema_decay', 0.999) or 0.999)
+    net_g.ema = utils.EMA(net_g, decay=ema_decay)
     net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm).to(device)
     optim_g = torch.optim.AdamW(
         net_g.parameters(),
@@ -287,6 +290,13 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         scaler.step(optim_g)
         scaler.update()
         _apply_d_lr_scale(hps, optim_g, optim_d, global_step + 1)
+        # EMA 更新（每 ema_interval 步并入一次当前权重）
+        _ema_interval = int(getattr(hps.train, 'ema_interval', 100) or 100)
+        if _ema_interval > 0 and global_step % _ema_interval == 0:
+            _g_ema = net_g.module if hasattr(net_g, 'module') else net_g
+            _ema = getattr(_g_ema, 'ema', None)
+            if _ema is not None:
+                _ema.update(_g_ema)
 
         if rank == 0:
             if global_step % hps.train.log_interval == 0:

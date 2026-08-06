@@ -207,7 +207,8 @@ class Svc(object):
             self.hps_ms.data.filter_length // 2 + 1,
             self.hps_ms.train.segment_size // self.hps_ms.data.hop_length,
             **self.hps_ms.model)
-        _ = utils.load_checkpoint(self.net_g_path, self.net_g_ms, None)
+        # 推理用 EMA 权重（更稳）；checkpoint 无 EMA 时自动回退原始权重
+        _ = utils.load_checkpoint(self.net_g_path, self.net_g_ms, None, use_ema=True)
         self.dtype = list(self.net_g_ms.parameters())[0].dtype
         if "half" in self.net_g_path and torch.cuda.is_available():
             _ = self.net_g_ms.half().eval().to(self.dev)
