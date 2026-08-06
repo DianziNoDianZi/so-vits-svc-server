@@ -36,13 +36,13 @@ class GeneratorOnnx(nn.Module):
             g = g.unsqueeze(0)
         return self.net_g.emb_g(g).transpose(1, 2)
 
-    def forward(self, c, f0, uv, g, vol=None, noise=None):
+    def forward(self, c, f0, uv, g, noise):
         # 注：rvc / rvc-flow-A1 无采样，noise 不参与图；vol_embedding=False 时 vol 为 0
         net = self.net_g
         c_lengths = torch.ones(c.size(0), dtype=torch.long).to(c.device) * c.size(-1)
         x_mask = torch.unsqueeze(commons.sequence_mask(c_lengths, c.size(2)), 1).to(c.dtype)
         gg = self._emb_g(g)
-        vv = net.emb_vol(vol[:, :, None]).transpose(1, 2) if vol is not None and net.vol_embedding else 0
+        vv = 0
         x = net.pre(c) * x_mask + net.emb_uv(uv.long()).transpose(1, 2) + vv
         if self.arch == 'rvc':
             return net.dec(x, g=gg, f0=f0)
@@ -99,27 +99,16 @@ def main():
     f0 = torch.rand(1, nf) * 200 + 80
     uv = torch.ones(1, nf)
     g = torch.zeros(1, 1, dtype=torch.long)
-    # 按架构决定输入集合（rvc/A1 无采样；vol_embedding=False 时 vol 不参与）
-    needs_noise = (arch == 'rvc-flow' and getattr(net_g, 'flow_mode', '') == 'a2') or arch in ('sovits-v1',)
-    if needs_noise:
-        sample_inputs = (c, f0, uv, g, torch.randn(1, inter, nf))
-        names = ['c', 'f0', 'uv', 'g', 'noise']
-        daxes = {
-            'c': {0: 'batch', 2: 'frames'},
-            'f0': {0: 'batch', 1: 'frames'},
-            'uv': {0: 'batch', 1: 'frames'},
-            'noise': {0: 'batch', 2: 'frames'},
-            'audio': {0: 'batch', 2: 'samples'},
-        }
-    else:
-        sample_inputs = (c, f0, uv, g)
-        names = ['c', 'f0', 'uv', 'g']
-        daxes = {
-            'c': {0: 'batch', 2: 'frames'},
-            'f0': {0: 'batch', 1: 'frames'},
-            'uv': {0: 'batch', 1: 'frames'},
-            'audio': {0: 'batch', 2: 'samples'},
-        }
+    # 统一传 noise：rvc / rvc-flow-A1 不用时会被 torch.onnx 自动消除（不产生无用输入）
+    sample_inputs = (c, f0, uv, g, torch.randn(1, inter, nf))
+    names = ['c', 'f0', 'uv', 'g', 'noise']
+    daxes = {
+        'c': {0: 'batch', 2: 'frames'},
+        'f0': {0: 'batch', 1: 'frames'},
+        'uv': {0: 'batch', 1: 'frames'},
+        'noise': {0: 'batch', 2: 'frames'},
+        'audio': {0: 'batch', 2: 'samples'},
+    }
 
     torch.onnx.export(
         infer, sample_inputs, args.out,
