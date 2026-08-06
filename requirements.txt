@@ -22,6 +22,7 @@ tensorboardX
 einops
 local_attention
 onnx
+onnxruntime
 onnxsim
 onnxoptimizer
 
