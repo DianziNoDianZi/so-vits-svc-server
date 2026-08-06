@@ -34,6 +34,7 @@
             <tr>
                 <th>名称</th>
                 <th>架构</th>
+                <th>ONNX</th>
                 <th>模型文件</th>
                 <th>扩散</th>
                 <th>聚类</th>
@@ -46,12 +47,17 @@
             <tr data-name="{{ item.m.name|lower }}" data-file="{{ item.m.model_path|lower }}" data-arch="{{ item.arch }}" data-time="{{ item.m.created_at.timestamp() }}">
                 <td>{{ item.m.name }}</td>
                 <td><span class="badge bg-secondary">{{ item.arch }}</span></td>
+                <td>{{ '✅' if item.onnx else '—' }}</td>
                 <td><small>{{ item.m.model_path[:30] }}...</small></td>
                 <td>{{ '✅' if item.m.diff_model_path else '—' }}</td>
                 <td>{{ '✅' if item.m.cluster_path else '—' }}</td>
                 <td><small>{{ item.m.created_at.strftime('%m-%d %H:%M') }}</small></td>
                 <td>
                     <a href="{{ url_for('model_edit', model_id=item.m.id) }}" class="btn btn-sm btn-outline-secondary">编辑</a>
+                    <form method="POST" action="{{ url_for('model_export_onnx', model_id=item.m.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-info" onclick="return confirm('导出 ONNX（主生成器）？推理将自动用 onnxruntime 加速，耗时约 1 分钟')">{{ '重新导出' if item.onnx else '导出 ONNX' }}</button>
+                    </form>
                     <form method="POST" action="{{ url_for('model_delete', model_id=item.m.id) }}" style="display:inline">
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('确定删除？')">删除</button>

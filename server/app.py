@@ -741,7 +741,11 @@ def model_list():
                         arch = (json.load(f).get('model') or {}).get('arch', '')
                 except Exception:
                     arch = ''
-        model_items.append({'m': m, 'arch': arch or 'sovits-v1'})
+        onnx_exists = False
+        if m.model_path:
+            onnx_exists = os.path.exists(
+                os.path.join(app.config['UPLOAD_FOLDER'], 'models', m.model_path + '.onnx'))
+        model_items.append({'m': m, 'arch': arch or 'sovits-v1', 'onnx': onnx_exists})
     return render_template('models_list.html', model_items=model_items)
 
 
@@ -912,6 +916,38 @@ def model_delete(model_id):
     db.session.delete(m)
     db.session.commit()
     flash('模型已删除', 'success')
+    return redirect(url_for('model_list'))
+
+
+@app.route('/models/<int:model_id>/export_onnx', methods=['POST'])
+@login_required
+def model_export_onnx(model_id):
+    """导出模型为 ONNX（主生成器），推理时自动用 onnxruntime；失败不影响原推理。"""
+    m = db.session.get(Model, model_id)
+    if not m or m.user_id != current_user.id:
+        abort(404)
+    if not m.model_path or not m.config_path:
+        flash('模型缺少模型文件或配置，无法导出', 'danger')
+        return redirect(url_for('model_list'))
+    model_file = os.path.join(app.config['UPLOAD_FOLDER'], 'models', m.model_path)
+    config_file = os.path.join(app.config['UPLOAD_FOLDER'], 'configs', m.config_path)
+    out_file = model_file + '.onnx'
+    if not os.path.exists(model_file) or not os.path.exists(config_file):
+        flash('模型或配置文件不存在', 'danger')
+        return redirect(url_for('model_list'))
+    import subprocess as _sp
+    script = os.path.join(PROJECT_DIR, 'onnx_export_generator.py')
+    try:
+        r = _sp.run(
+            [sys.executable, '-X', 'utf8', script, model_file, config_file, out_file],
+            cwd=PROJECT_DIR, capture_output=True, text=True, timeout=900)
+        if r.returncode == 0 and os.path.exists(out_file):
+            flash(f'ONNX 导出成功（{os.path.getsize(out_file) / 1048576:.0f}MB），推理将自动使用', 'success')
+        else:
+            err = (r.stderr or r.stdout or '')[-400:]
+            flash(f'ONNX 导出失败：{err}', 'danger')
+    except Exception as e:
+        flash(f'ONNX 导出异常：{e}', 'danger')
     return redirect(url_for('model_list'))
 
 

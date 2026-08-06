@@ -42,6 +42,10 @@
             <button type="submit" class="btn btn-primary">保存</button>
             <a href="{{ url_for('model_list') }}" class="btn btn-secondary">返回</a>
         </form>
+        <form method="POST" action="{{ url_for('model_export_onnx', model_id=model.id) }}" class="mt-2">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-info" onclick="return confirm('导出 ONNX（主生成器）？推理将自动用 onnxruntime 加速，耗时约 1 分钟')">导出 ONNX</button>
+        </form>
     </div>
 </div>
 {% endblock %}
