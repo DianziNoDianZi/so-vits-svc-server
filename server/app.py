@@ -2417,6 +2417,7 @@ def train_submit():
         'diff_gamma': _flt('diff_gamma', 0.5),
         'diff_amp': request.form.get('diff_amp', 'fp32'),
         'diff_interval_val': _int('diff_interval_val', 200),
+        'diff_max_steps': _int('diff_max_steps', 0),
     }
 
     # 续训时继承原任务的模型架构（避免续训链上架构被表单默认值覆盖）

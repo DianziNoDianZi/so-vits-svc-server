@@ -180,6 +180,7 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
         diff_layers=20, diff_chans=512, diff_hidden=256, diff_lr=0.0001,
         diff_decay_step=100000, diff_gamma=0.5, diff_amp='fp32',
         diff_interval_val=200,
+        diff_max_steps=0,
         resume_from_id=0, diff_root_id=0):
     log_lines = []
     def log(msg):
@@ -532,6 +533,7 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
             dc['train']['gamma'] = diff_gamma
             dc['train']['amp_dtype'] = diff_amp
             dc['train']['interval_val'] = max(int(diff_interval_val), 1)
+            dc['train']['max_steps'] = max(int(diff_max_steps), 0)
             dc['train']['cache_all_data'] = False
             dc['train']['num_workers'] = 0
             with open(diff_config, 'w', encoding='utf-8') as f:

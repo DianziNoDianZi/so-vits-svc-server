@@ -113,9 +113,16 @@ def train(args, initial_global_step, model, optimizer, scheduler, vocoder, loade
     else:
         raise ValueError(' [x] Unknown amp_dtype: ' + args.train.amp_dtype)
     saver.log_info("epoch|batch_idx/num_batches|output_dir|batch/s|lr|time|step")
+    max_steps = int(getattr(args.train, 'max_steps', 0) or 0)
     for epoch in range(args.train.epochs):
         for batch_idx, data in enumerate(loader_train):
             saver.global_step_increment()
+            # 达到目标步数自动停止（保存最终 checkpoint），避免 epochs 过大导致过拟合
+            if max_steps > 0 and saver.global_step >= max_steps:
+                optimizer_save = optimizer if args.train.save_opt else None
+                saver.save_model(model, optimizer_save, postfix=f'{saver.global_step}')
+                saver.log_info(f'[solver] reached max_steps {max_steps}, saving checkpoint and stopping')
+                return
             optimizer.zero_grad()
 
             # unpack data
