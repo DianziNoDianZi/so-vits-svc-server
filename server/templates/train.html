@@ -534,6 +534,13 @@ function loadQuickResume() {
                                     <input type="number" name="diff_gamma" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.5" step="0.1">
                                 </div>
                             </div>
+                            <div class="row mb-2">
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">保存间隔（步）</label>
+                                    <input type="number" name="diff_interval_val" class="form-control form-control-sm bg-dark text-light border-secondary" value="200" min="10" max="10000" step="10">
+                                    <small class="text-secondary">每 N 步保存一次 checkpoint</small>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <button type="submit" class="btn btn-warning w-100" {{ 'disabled' if alive else '' }}>提交训练</button>
