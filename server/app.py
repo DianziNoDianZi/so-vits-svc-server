@@ -2105,8 +2105,10 @@ def _parse_training_log(active):
             with open(diff_cfg_path, 'r', encoding='utf-8') as f:
                 dc = yaml.safe_load(f)
             info['diff_total_epochs'] = int(dc.get('train', {}).get('epochs', 0) or 0)
+            diff_max_steps = int(dc.get('train', {}).get('max_steps', 0) or 0)
         except Exception:
             info['diff_total_epochs'] = 0
+            diff_max_steps = 0
         # 扩散 solver 日志写在 expdir/log_info.txt（train.log 里没有），需要单独读取。
         # 格式：epoch: 5 | 123/456 | expdir | batch/s: 1.20 | lr: 0.0001 | loss: 1.234 | time: 10s | step: 12345
         root_id = active.resume_from_id or active.id
@@ -2124,14 +2126,15 @@ def _parse_training_log(active):
         m = re.search(r'epoch:\s*(\d+)\s*\|\s*(\d+)/(\d+)', diff_extra)
         if m:
             info['diff_epoch'] = int(m.group(1))
+            batch_now = int(m.group(2))
             batch_total = max(int(m.group(3)), 1)
-            diff_total_steps = max(info['diff_total_epochs'], 1) * batch_total
-            info['total_steps'] = diff_total_steps
             sm = re.findall(r'\| step:\s*(\d+)', diff_extra)
             if sm:
-                info['current_step'] = min(int(sm[-1]), diff_total_steps)
-                info['pct'] = min(int(info['current_step'] / diff_total_steps * 100), 99)
-                # log_info.txt 无时间戳：用全程平均，但扣除续训起点（避免恢复步数虚增速度）
+                info['current_step'] = int(sm[-1])
+            if diff_max_steps > 0:
+                # 用户设了目标步数：按步数算进度/ETA（total = max_steps）
+                info['total_steps'] = diff_max_steps
+                info['pct'] = min(int(info['current_step'] / diff_max_steps * 100), 99)
                 start_step = 0
                 if active.resume_from_id:
                     dd = os.path.join(PROJECT_DIR, 'logs', '44k', 'diffusion', f'task_{root_id}')
@@ -2142,7 +2145,15 @@ def _parse_training_log(active):
                 progress = info['current_step'] - start_step
                 if progress > 0 and elapsed_secs > 0:
                     speed = progress / elapsed_secs
-                    info['eta'] = _format_eta(int((diff_total_steps - info['current_step']) / max(speed, 1e-6)))
+                    info['eta'] = _format_eta(int((diff_max_steps - info['current_step']) / max(speed, 1e-6)))
+            elif info['diff_total_epochs'] > 0:
+                # 用户按 epochs 理解：显示 epoch 进度（不显示步数），ETA 按 epoch 速率估算
+                info['total_steps'] = 0
+                epoch_progress = (info['diff_epoch'] - 1) + batch_now / batch_total
+                info['pct'] = min(int(epoch_progress / info['diff_total_epochs'] * 100 + 0.5), 99)
+                if epoch_progress > 0 and elapsed_secs > 0:
+                    info['eta'] = _format_eta(
+                        int(elapsed_secs * (info['diff_total_epochs'] - epoch_progress) / epoch_progress))
     else:
         total_steps = active.total_steps or 0
         pairs = _parse_step_times(log_content)
