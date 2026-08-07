@@ -133,6 +133,7 @@
                     <a href="{{ url_for('train_result', tid=t.id) }}" class="btn btn-success btn-sm">模型</a>
                     <a href="{{ url_for('train_result', tid=t.id, config=1) }}" class="btn btn-outline-secondary btn-sm">配置</a>
                     {% endif %}
+                    <a href="{{ url_for('train_log', tid=t.id) }}" class="btn btn-outline-light btn-sm">日志</a>
                     {% if t.diff_model_path %}
                     <a href="{{ url_for('train_result', tid=t.id, diff=1) }}" class="btn btn-info btn-sm">扩散</a>
                     {% endif %}

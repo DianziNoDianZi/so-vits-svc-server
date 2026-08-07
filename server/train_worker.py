@@ -461,18 +461,33 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 log(f'SoVITS 训练异常退出，尝试保存已有 checkpoint: {e}')
 
             log(f'保存 SoVITS 模型...')
-            model_name = _latest_checkpoint(data_dir, 'G_', '.pth') or ''
-            if model_name == 'G_0.pth':
-                # 只有底模，说明训练在保存任何 checkpoint 之前就崩了
-                model_name = ''
-                log('⚠ 未产生训练 checkpoint（只有底模 G_0.pth）')
+            # 复制最近 keep_ckpts 个 checkpoint 到模型目录（不只最新一个）
+            ckpt_names = []
+            if os.path.isdir(data_dir):
+                for f in os.listdir(data_dir):
+                    if f.startswith('G_') and f.endswith('.pth') and f != 'G_0.pth':
+                        try:
+                            n = int(''.join(c for c in f if c.isdigit()) or 0)
+                        except Exception:
+                            n = 0
+                        if n > 0:
+                            ckpt_names.append((n, f))
+            ckpt_names.sort()
+            ckpt_names = [f for _n, f in ckpt_names][-max(int(keep_ckpts), 1):]
+            model_name = ckpt_names[-1] if ckpt_names else ''
+            if not model_name:
+                log('⚠ 未产生训练 checkpoint（只有底模 G_0.pth 或为空）')
+            for ck in ckpt_names:
+                try:
+                    shutil.copy2(os.path.join(data_dir, ck), os.path.join(UPLOAD_BASE, 'models', ck))
+                except OSError as e:
+                    log(f'checkpoint {ck} 复制失败: {e}')
             if model_name:
-                shutil.copy2(os.path.join(data_dir, model_name), os.path.join(UPLOAD_BASE, 'models', model_name))
                 cfg_name = model_name.replace('.pth', '.json')
                 shutil.copy2(config_path, os.path.join(UPLOAD_BASE, 'configs', f'config_{cfg_name}'))
                 saved_model = model_name
                 saved_config = f'config_{cfg_name}'
-                log(f'SoVITS 模型已保存: {model_name}')
+                log(f'SoVITS 模型已保存: {model_name}（共 {len(ckpt_names)} 个 checkpoint 复制到模型目录）')
                 # 自动建特征检索索引（失败不阻塞训练结果）
                 try:
                     spk_dir = os.path.join(dataset_dir, speaker)

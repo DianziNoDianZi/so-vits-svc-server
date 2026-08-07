@@ -1691,6 +1691,7 @@ FILE_DIRS = {
     'configs': '配置文件 (.json/.yaml)',
     'results': '推理结果',
     'dataset_zips': '数据集 zip',
+    'train_data': '训练产物 (checkpoint / 扩散模型)',
 }
 
 
@@ -1702,15 +1703,32 @@ def files_page():
         d = os.path.join(app.config['UPLOAD_FOLDER'], sub)
         items = []
         if os.path.isdir(d):
-            for f in sorted(os.listdir(d)):
-                fp = os.path.join(d, f)
-                if os.path.isfile(fp):
-                    try:
-                        size = f'{os.path.getsize(fp) / 1048576:.1f} MB'
-                        modified = datetime.fromtimestamp(os.path.getmtime(fp)).strftime('%m-%d %H:%M')
-                    except OSError:
-                        size, modified = '', ''
-                    items.append({'name': f, 'size': size, 'modified': modified})
+            if sub == 'train_data':
+                # 列出各任务目录里的模型文件（G_*.pth / D_*.pth / model_*.pt / config.json）
+                for task_dir in sorted(os.listdir(d)):
+                    td = os.path.join(d, task_dir)
+                    if not os.path.isdir(td):
+                        continue
+                    for f in sorted(os.listdir(td)):
+                        if f.endswith(('.pth', '.pt', '.json')):
+                            fp = os.path.join(td, f)
+                            if os.path.isfile(fp):
+                                try:
+                                    size = f'{os.path.getsize(fp) / 1048576:.1f} MB'
+                                    modified = datetime.fromtimestamp(os.path.getmtime(fp)).strftime('%m-%d %H:%M')
+                                except OSError:
+                                    size, modified = '', ''
+                                items.append({'name': f'{task_dir}/{f}', 'size': size, 'modified': modified})
+            else:
+                for f in sorted(os.listdir(d)):
+                    fp = os.path.join(d, f)
+                    if os.path.isfile(fp):
+                        try:
+                            size = f'{os.path.getsize(fp) / 1048576:.1f} MB'
+                            modified = datetime.fromtimestamp(os.path.getmtime(fp)).strftime('%m-%d %H:%M')
+                        except OSError:
+                            size, modified = '', ''
+                        items.append({'name': f, 'size': size, 'modified': modified})
         sections.append({'key': sub, 'title': title, 'items': items})
     return render_template('files.html', sections=sections)
 
@@ -1720,12 +1738,15 @@ def files_page():
 def file_download():
     sub = request.args.get('sub', '')
     name = request.args.get('name', '')
-    # 用 basename 校验拒绝路径穿越（secure_filename 会吞掉开头的下划线，破坏 _开头的文件名）
-    if sub not in FILE_DIRS or not name or os.path.basename(name) != name:
+    if sub not in FILE_DIRS or not name:
         abort(400)
     try:
         path = safe_join(app.config['UPLOAD_FOLDER'], sub, name)
     except ValueError:
+        abort(400)
+    # 只允许单层文件名，或 train_data 下 task_*/ 子目录（防穿越由 safe_join 保证）
+    rel = os.path.relpath(path, os.path.join(app.config['UPLOAD_FOLDER'], sub))
+    if '..' in rel.split(os.sep) or os.path.isabs(rel):
         abort(400)
     if not os.path.exists(path):
         abort(404)
@@ -1913,8 +1934,8 @@ def train_worker_daemon():
                                         ld = info.get('loss_data', [])
                                         if len(ld) < 10:
                                             continue
-                                        recent = ld[-20:]
                                         kind, detail = None, ''
+                                        recent = ld[-20:]
                                         if any(('g' in x and x['g'] != x['g']) or ('d' in x and x['d'] != x['d'])
                                                for x in recent):
                                             kind = 'nan_loss'
@@ -1928,6 +1949,19 @@ def train_worker_daemon():
                                                 if d_avg < 0.6 and g_avg > 3.0:
                                                     kind = 'disc_pressed'
                                                     detail = f'最近 {len(recent)} 个点：D 均值 {d_avg:.3f}，G 均值 {g_avg:.3f}'
+                                                elif len(ld) >= 40:
+                                                    # 趋势检测：D 持续走低 + G 持续不降 = 判别器持续压制
+                                                    prev = ld[-40:-20]
+                                                    pg = [x.get('g') for x in prev if x.get('g') is not None]
+                                                    pd = [x.get('d') for x in prev if x.get('d') is not None]
+                                                    if len(pg) >= 10 and len(pd) >= 10:
+                                                        prev_g_avg = sum(pg) / len(pg)
+                                                        prev_d_avg = sum(pd) / len(pd)
+                                                        if (d_avg < prev_d_avg * 0.7 and g_avg >= prev_g_avg
+                                                                and g_avg > 3.0):
+                                                            kind = 'disc_pressed'
+                                                            detail = (f'判别器持续压制：D {prev_d_avg:.2f}→{d_avg:.2f}，'
+                                                                      f'G {prev_g_avg:.2f}→{g_avg:.2f}')
                                         if kind and t.anomaly_state != 'pending':
                                             token = uuid.uuid4().hex[:32]
                                             t.anomaly_token = token
@@ -1974,6 +2008,19 @@ def train_worker_daemon():
                             task.diff_model_path = result['diff_model_path']
                         if result.get('diff_config_path'):
                             task.diff_config_path = result['diff_config_path']
+                        # 训练正常完成：自动注册到模型列表（主模型任务；扩散模型在任务上可下载）
+                        if task.status == 'done' and task.model_type != 'diffusion' and result.get('model_path'):
+                            try:
+                                _reg = Model(
+                                    user_id=task.user_id,
+                                    name=f'{task.speaker}-{result["model_path"].replace(".pth", "")}step',
+                                    model_path=result['model_path'],
+                                    config_path=result.get('config_path') or '',
+                                    cluster_path=result.get('cluster_path') or None,
+                                )
+                                db.session.add(_reg)
+                            except Exception:
+                                pass
                         task.done_at = datetime.utcnow()
                         db.session.commit()
                         try:
@@ -2693,6 +2740,19 @@ def train_result(tid):
     if not os.path.exists(path):
         abort(404)
     return send_file(path, as_attachment=True)
+
+
+@app.route('/train/<int:tid>/log')
+@login_required
+def train_log(tid):
+    """下载训练任务日志。"""
+    task = TrainingTask.query.get_or_404(tid)
+    if task.user_id != current_user.id:
+        abort(403)
+    if not task.log_path or not os.path.exists(task.log_path):
+        abort(404)
+    return send_file(task.log_path, as_attachment=True,
+                     download_name=f'train_task_{tid}.log')
 
 
 @app.route('/train/anomaly/<int:tid>/<token>')
