@@ -40,11 +40,13 @@ On top of the original so-vits-svc (VITS structure), this project adds two self-
 |--------------|-----------|--------|-------|
 | `sovits-v1` | TextEncoder + Flow + enc_q (original VITS) | ~52M | Best compatibility, interchangeable with community models |
 | `rvc` | feature-direct decoder (no TextEncoder / Flow) | ~15.5M | More stable and faster training, good timbre preservation, suits small datasets |
-| `rvc-flow` | lightweight TransformerFlow (A1 / A2) | ~16M | Higher quality ceiling, needs more data |
+| `rvc-flow` | lightweight TransformerFlow (A1 / A2), unified flow optional | ~16M | Higher quality ceiling, needs more data |
+
+All three share the ContentVec feature extractor and NSF-HiFiGAN decoder; the only difference is the transform path between "feature → decoder", so the decoder part of a pretrained base model (G_0/D_0) is reusable across architectures.
 
 **RVC direct (`arch: "rvc"`)**
 
-TextEncoder and Flow are removed; ContentVec features go through a single projection straight into the NSF-HiFiGAN decoder, with f0 injected by the decoder's harmonic source. About one-third the params of v1, training is more stable and converges faster, and it avoids KL instability of flow on small datasets.
+TextEncoder and Flow are removed; ContentVec features go through a single projection straight into the NSF-HiFiGAN decoder, with f0 injected by the decoder's harmonic source. About one-third the params of v1, training is more stable and converges faster, and it avoids KL instability of flow on small datasets. Suits small datasets (<30 min) or when you want a model fast.
 
 **RVC-Flow (`arch: "rvc-flow"`)**
 
@@ -53,17 +55,76 @@ Adds a lightweight TransformerFlow on top of the direct path to enhance feature 
 - `A1 feature-prior flow` (`flow_mode: "a1"`): flow transforms features forward, KL constrained to a standard-normal prior (for architecture comparison)
 - `A2 posterior flow` (`flow_mode: "a2"`, default): a tiny enc_q (1-layer WN) provides the posterior from the spectrogram, flow aligns it to the prior; more stable training
 
-A2 mode can optionally enable the **unified flow** (`use_unified_flow: true`): a single shared FFT backbone carries both Normalizing Flow (reversible) and Flow Matching (velocity field) via dual output heads sharing backbone parameters. Once enabled, three inference modes are available:
+A2 uses a very lightweight enc_q (1-layer WN) to extract a posterior latent `z_q` from the input spectrogram, and the flow aligns the standard-normal prior to the distribution of `z_q`. Compared to A1, which hard-constrains the whole feature space to a normal distribution, A2 only has the flow learn a "prior ↔ posterior" mapping, so the KL term is more stable and small datasets are less likely to collapse.
 
-- `nf`: pure NF prior sampling + flow inverse (fastest, same as original A2)
-- `fm`: pure FM, 32-step Euler integration from noise to data (highest quality ceiling, slowest)
-- `hybrid` (recommended): NF inverse gives the start point, FM refines it with a few steps (default 4) — near-FM quality at near-NF speed
+### Unified Flow
 
-FM training uses the NF output as its start point (training/inference consistency), and the FM output head is zero-initialized (early Hybrid ≈ NF, gradually learning the velocity field). Full usage guide: [docs/unified_flow.md](docs/unified_flow.md).
+A2 mode can optionally enable the **unified flow** (`use_unified_flow: true`) — the flagship feature of this project: a single shared FFT backbone carries both Normalizing Flow (NF, reversible) and Flow Matching (FM, velocity field) via dual output heads sharing backbone parameters. Full usage guide: [docs/unified_flow.md](docs/unified_flow.md).
+
+**Motivation**
+
+- Pure NF is fast (a single inverse pass), but one reversible step has limited expressiveness and high-frequency detail is often weak.
+- Pure FM (multi-step Euler integration from noise to data) has a high quality ceiling, but 32-step integration is slow.
+- Both use the same family of flow backbone (FFT/CouplingLayer); training them separately wastes capacity with no parameter reuse.
+- Unified flow lets them **share the backbone and each play to its strength**: NF gives a fast start point, FM refines with a few steps — near-FM quality at near-NF speed.
+
+**Structure**
+
+```
+                ┌─────────────────────────────┐
+   prior z_p ──▶│                             │── head_nf ──▶ reversible s/t  (NF path, channel-split coupling)
+                │   shared FFT backbone        │
+   x_t (interp)─▶│   (n_layers CouplingLayers)  │── head_fm ──▶ velocity field v (FM path, predicts v≈x_1-x_0)
+                └─────────────────────────────┘
+                       ▲ shared params
+```
+
+Inside each `GeneralizedCouplingLayer`:
+
+- **Shared backbone**: multi-layer FFT (WN + attention) feature extraction, shared by NF and FM — no parameter doubling.
+- **NF head (`head_nf`)**: outputs `s` (scale) / `t` (shift) of the channel-split coupling, guaranteeing reversibility for exact prior↔posterior transforms.
+- **FM head (`head_fm`)**: outputs the velocity field `v` guiding the `x_0` (noise/start) → `x_1` (data) trajectory; not reversible, but multi-step Euler integration approaches high-quality samples.
+
+**Training**
+
+`forward` computes both the NF loss (KL + reconstruction, same as original A2) and the FM loss:
+
+- `x_1 = z_q.detach()` (true posterior, gradient detached from enc_q to avoid FM backprop interfering with NF)
+- `x_0 = NF_inverse(prior_sample).detach()` (**matches the inference start point** — a key consistency guarantee)
+- Linear interpolation `x_t = (1-t)·x_0 + t·x_1` between `x_0` and `x_1`; FM head predicts velocity `v`, MSE fits the true velocity `u_t = x_1 - x_0`
+- `loss_flow_match` is weighted by `c_fm` (default 0.5) and merged into `loss_gen_all` for joint backprop
+
+Two critical engineering fixes (missing in early versions; without them Hybrid inference is unintelligible):
+
+1. **Training/inference start-point consistency**: FM training must use "NF inverse output" as `x_0`, not pure noise. Otherwise, at inference FM starts from the NF output, which doesn't match the training distribution, and the velocity field is wrong.
+2. **`head_fm` zero initialization**: FM head weights and bias are zeroed, so early on `v=0` (identity map) and Hybrid ≈ NF; the velocity field is learned gradually, preventing a randomly-initialized large velocity from destroying the NF output.
+
+Training logs print an extra `FlowMatch Loss` line, and the web training page draws a third yellow FM loss curve.
+
+**Inference (three modes share one set of weights)**
+
+| Mode | Flow | Steps | Speed | Quality | Use case |
+|------|------|-------|-------|---------|----------|
+| `nf` | prior sampling → NF inverse → decoder | 1 | Fastest | Slightly weak HF | Speed / real-time |
+| `fm` | pure noise → FM 32-step Euler → decoder | 32 | Slowest | Highest ceiling | Offline refinement |
+| `hybrid` (recommended) | NF inverse start → FM 4-step refine → decoder | 1+4 | Near NF | Near FM | **Default** |
+
+**Performance** (G_6000.pth, see [docs/unified_flow.md](docs/unified_flow.md) sections 5–6)
+
+| Mode | Time (s) | HF ratio | Notes |
+|------|----------|----------|-------|
+| NF | 2.14 | 0.260 | Slightly weak HF |
+| Hybrid(4) | 0.15 | 0.272 | Near-FM quality, 4.2× faster |
+| FM(32) | 0.63 | 0.275 | Quality ceiling |
+| Original audio | — | 0.287~0.323 | baseline |
+
+Step-sweep conclusion: `hybrid_steps=4` is the quality/speed sweet spot; 2 steps is faster but measurably lower quality; 8+ has diminishing returns. `c_fm=0.5` is the empirical best (0.1 → FM gets almost no gradient).
+
+**ONNX export**: unified-flow models support export; the Euler integration loop is unrolled per config's `hybrid_steps`, and output matches PyTorch (SNR ~30dB).
 
 **Checkpoint architecture validation**
 
-Checkpoints record an architecture tag on save; on load the tag is verified and mismatches fail loudly, preventing rvc weights from silently loading as rvc-flow (or vice versa) and corrupting the model. v1 base models (G_0/D_0) remain usable as initialization for the rvc family (shared decoder).
+Checkpoints record an architecture tag (`arch` + `flow_mode` + `use_unified_flow`) on save; on load the tag is verified and mismatches fail loudly, preventing rvc weights from silently loading as rvc-flow (or vice versa) and corrupting the model. v1 base models (G_0/D_0) remain usable as initialization for the rvc family (shared decoder).
 
 ## Quick Start
 
