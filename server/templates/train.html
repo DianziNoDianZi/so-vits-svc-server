@@ -130,6 +130,10 @@ function loadQuickResume() {
                             } else {
                                 ch.data.datasets[0].data = ld.map(function (d) { return d.g; });
                                 ch.data.datasets[1].data = ld.map(function (d) { return d.d; });
+                                // 统一流 FM loss：有 fm 字段时更新第三条曲线，无则置空
+                                if (ch.data.datasets[2]) {
+                                    ch.data.datasets[2].data = ld.map(function (d) { return d.fm !== undefined ? d.fm : null; });
+                                }
                             }
                             ch.update();
                             return;
@@ -164,6 +168,10 @@ function loadQuickResume() {
                             {label:'G Loss', data:ld.map(function(d){return d.g;}), borderColor:'#0d6efd', borderWidth:1, pointRadius:0, fill:false},
                             {label:'D Loss', data:ld.map(function(d){return d.d;}), borderColor:'#dc3545', borderWidth:1, pointRadius:0, fill:false}
                         ];
+                        // 统一流 FM loss：仅当至少一条数据含 fm 字段时画第三条曲线
+                        if (ld.some(function (d) { return d.fm !== undefined; })) {
+                            datasets.push({label:'FM Loss', data:ld.map(function(d){return d.fm !== undefined ? d.fm : null;}), borderColor:'#ffc107', borderWidth:1, pointRadius:0, fill:false});
+                        }
                     }
                     window.lossChartInst = new Chart(canvas.getContext('2d'), {
                         type: 'line',

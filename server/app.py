@@ -1906,6 +1906,9 @@ def train_worker_daemon():
                                                 g = ld[-1].get('g')
                                                 d = ld[-1].get('d')
                                                 losses = f'G={g} D={d}'
+                                                fm = ld[-1].get('fm')
+                                                if fm is not None:
+                                                    losses += f' FM={fm}'
                                             from notifier import notify_train_progress
                                             notify_train_progress(
                                                 t,
@@ -2238,6 +2241,11 @@ def _parse_training_log(active):
             vals = [float(x.strip()) for x in m.group(1).split(',')]
             if len(vals) >= 2:
                 info['loss_data'].append({'g': round(vals[1], 4), 'd': round(vals[0], 4)})
+        # 统一流 FM loss：train.py 在 Losses 行之后单独打印 FlowMatch Loss: 0.xxxxxx
+        # 把 fm 值补到最后一条 loss_data 上，前端据此画第三条曲线
+        mfm = re.search(r'FlowMatch Loss:\s*([\d.eE+-]+)', line)
+        if mfm and info['loss_data']:
+            info['loss_data'][-1]['fm'] = round(float(mfm.group(1)), 4)
         m3 = re.search(r'\| loss: ([\d.eE+-]+) .*\| step: (\d+)', line)
         if m3:
             info['loss_data'].append({'diff': round(float(m3.group(1)), 4)})
