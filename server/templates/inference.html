@@ -58,9 +58,9 @@ function fillParams(select) {
     setv('second_encoding', !!p.second_encoding);
     setv('loudness_envelope', p.loudness_envelope !== undefined ? p.loudness_envelope : 0);
     setv('output_format', p.output_format || 'wav');
-    // 检索索引：无索引时禁用 cluster_ratio
+    // 检索索引：无索引时不禁用输入框，后端会在推理时自动置 0
     var cr = document.querySelector('input[name="cluster_ratio"]');
-    if (cr) { cr.disabled = opt.dataset.hasCluster !== '1'; if (cr.disabled) cr.value = '0'; }
+    if (cr) { cr.disabled = false; }
 }
 document.addEventListener('DOMContentLoaded', function() {
     var sel = document.querySelector('select[name="config_id"]');

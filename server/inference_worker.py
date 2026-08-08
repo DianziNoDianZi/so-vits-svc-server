@@ -144,6 +144,7 @@ def main():
         use_spk_mix=False,
         second_encoding=params.get('second_encoding', False),
         loudness_envelope_adjustment=params.get('loudness_envelope', 1),
+        hybrid_mode=params.get('hybrid_mode', 'auto'),
     )
     svc.clear_empty()
 

@@ -4,11 +4,20 @@
     function syncClusterRatio() {
         var sel = document.querySelector('select[name="model_id"]');
         var input = document.querySelector('input[name="cluster_ratio"]');
+        var hint = document.getElementById('clusterHint');
         if (!sel || !input) return;
         var opt = sel.options[sel.selectedIndex];
         var has = opt ? opt.getAttribute('data-has-cluster') === '1' : false;
-        input.disabled = !has;
-        if (!has) input.value = '0';
+        input.disabled = false;
+        if (hint) {
+            if (has) {
+                hint.textContent = '需要模型挂载检索索引（训练完成自动生成）';
+                hint.className = 'text-secondary';
+            } else {
+                hint.textContent = '当前模型未挂载检索索引，推理时将自动忽略聚类比例';
+                hint.className = 'text-warning';
+            }
+        }
     }
     document.addEventListener('DOMContentLoaded', function () {
         var sel = document.querySelector('select[name="model_id"]');
@@ -126,6 +135,16 @@
                         <option value="mp3" {{ 'selected' if params.get('output_format') == 'mp3' }}>MP3</option>
                         <option value="flac" {{ 'selected' if params.get('output_format') == 'flac' }}>FLAC</option>
                     </select>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Flow 推理模式</label>
+                    <select name="hybrid_mode" class="form-select bg-dark text-light border-secondary">
+                        <option value="auto" {{ 'selected' if params.get('hybrid_mode', 'auto') == 'auto' }}>auto (自动)</option>
+                        <option value="nf" {{ 'selected' if params.get('hybrid_mode') == 'nf' }}>nf (纯 NF，最快)</option>
+                        <option value="hybrid" {{ 'selected' if params.get('hybrid_mode') == 'hybrid' }}>hybrid (NF+FM 精修，推荐)</option>
+                        <option value="fm" {{ 'selected' if params.get('hybrid_mode') == 'fm' }}>fm (纯 FM 32 步，最慢)</option>
+                    </select>
+                    <small class="text-secondary">仅方案3统一流模型生效；非统一流模型固定走 nf</small>
                 </div>
             </div>
             <button type="submit" class="btn btn-primary">{{ '保存' if config else '创建' }}</button>

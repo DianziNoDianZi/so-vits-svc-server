@@ -109,4 +109,5 @@ DEFAULT_PARAMS = {
     'second_encoding': False,
     'loudness_envelope': 0,
     'output_format': 'wav',
+    'hybrid_mode': 'auto',
 }
