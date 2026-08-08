@@ -3,6 +3,10 @@ __pycache__/
 *.pyo
 .idea/
 
+# 内部开发文档 / 个人部署笔记（不入仓库）
+plan.md
+way_to_put_in_the_server.txt
+
 # 预训练模型（部署时下载或手动上传）
 pretrain/*.pt
 pretrain/*.pth
