@@ -230,6 +230,11 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False
         if hasattr(model, 'ema') and model.ema is not None:
             try:
                 model.ema.load_state_dict(ema_sd)
+                # 恢复的 shadow 来自 CPU checkpoint，需同步到模型所在设备（否则 EMA.update 会 device mismatch）
+                _dev_model = model.module if hasattr(model, 'module') else model
+                for _name, _p in _dev_model.named_parameters():
+                    if _name in model.ema.shadow:
+                        model.ema.shadow[_name] = model.ema.shadow[_name].to(_p.device)
             except Exception:
                 pass
         if use_ema:

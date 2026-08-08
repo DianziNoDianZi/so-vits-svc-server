@@ -482,12 +482,17 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                     shutil.copy2(os.path.join(data_dir, ck), os.path.join(UPLOAD_BASE, 'models', ck))
                 except OSError as e:
                     log(f'checkpoint {ck} 复制失败: {e}')
+                # 每个 checkpoint 配一份独立配置（内容相同，文件名对应，方便单独下载使用）
+                try:
+                    ck_cfg = ck.replace('.pth', '.json')
+                    shutil.copy2(config_path, os.path.join(UPLOAD_BASE, 'configs', f'config_{ck_cfg}'))
+                except OSError as e:
+                    log(f'checkpoint {ck} 配置复制失败: {e}')
             if model_name:
                 cfg_name = model_name.replace('.pth', '.json')
-                shutil.copy2(config_path, os.path.join(UPLOAD_BASE, 'configs', f'config_{cfg_name}'))
                 saved_model = model_name
                 saved_config = f'config_{cfg_name}'
-                log(f'SoVITS 模型已保存: {model_name}（共 {len(ckpt_names)} 个 checkpoint 复制到模型目录）')
+                log(f'SoVITS 模型已保存: {model_name}（共 {len(ckpt_names)} 个 checkpoint + 配置复制到模型目录）')
                 # 自动建特征检索索引（失败不阻塞训练结果）
                 try:
                     spk_dir = os.path.join(dataset_dir, speaker)
