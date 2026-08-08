@@ -15,7 +15,7 @@ Upstream-derived files that were modified (per AGPL-3.0 section 5):
   * models.py                          - added RVC-style lightweight generator
                                          (SynthesizerTrnRvc) and RVC-Flow variant
                                          (SynthesizerTrnRvcFlow, A1/A2), arch_name tags;
-                                         Scheme-3 unified NF+FM flow:
+                                         unified NF+FM flow:
                                          GeneralizedCouplingLayer (shared FFT backbone,
                                          dual NF/FM heads, channel-split coupling for
                                          reversibility) and GeneralizedFlow container;
@@ -48,7 +48,7 @@ Upstream-derived files that were modified (per AGPL-3.0 section 5):
   * diffusion/logger/utils.py          - encoding fixes
   * cluster/train_cluster.py           - encoding fixes
   * configs_template/config_template.json      - project defaults (arch / d_lr_scale /
-                                         num_workers); Scheme-3 unified-flow config keys
+                                         num_workers); unified-flow config keys
                                          (model.use_unified_flow / hybrid_steps /
                                          time_embed_dim, train.c_fm)
   * configs_template/diffusion_template.yaml   - project defaults
