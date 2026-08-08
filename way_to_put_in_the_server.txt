@@ -1,0 +1,34 @@
+几个坑提前给你排掉，完整命令应该是：
+
+  # 1. 上传（Windows 本地执行）
+  scp -P 25163 D:\so-vits-svc\so-vits-svc-server-deploy.zip root@服务器IP:/opt/
+
+  # 2. 服务器上执行（注意用 root，或每条前面加 sudo）
+  cd /opt
+  apt-get install -y unzip        # 新机器可能没装 unzip，先装上
+  unzip so-vits-svc-server-deploy.zip   # 解压出 /opt/so-vits-svc
+  cd so-vits-svc
+  bash deploy_cpu.sh              # 装依赖 + 下载模型 + 注册后台服务
+
+  ## 几个注意点
+
+  1. 必须 root 权限：脚本要装 apt 包、写 /opt、建 swap、写 /etc/systemd，普通用户跑会一路报错。登录 root 或 sudo bash
+     deploy_cpu.sh。
+
+  2. unzip 可能没装：脚本里虽然会装，但那是解压之后的事——所以先手动装一下，或者用 python3 -m zipfile -e so-vits-svc-
+     server-deploy.zip . 替代 unzip。
+
+  3. 需要联网：脚本会下载 CPU 版 torch 和预训练模型（ContentVec、nsf_hifigan）。如果服务器访问那些镜像很慢/失败，脚本会
+     继续但提示"手动上传"——之后登录网页用"预训练"页补传即可，不影响服务启动。
+
+  4. 部署完验证：
+
+  systemctl status ssvc                     # 应显示 active (running)
+  curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5000/login   # 200
+  journalctl -u ssvc -n 100 | grep 初始密码  # 首次启动的管理员密码
+
+  5. 防火墙放行 5000 端口（云服务器还要在安全组里开），不然外面访问不了：ufw allow 5000/tcp 或安全组规则。
+  6. 重复部署：如果 /opt/so-vits-svc 已存在，unzip 会覆盖代码但保留 venv、uploads、pretrain——模型和数据库不会丢，可以放
+     心升级。
+
+  这样跑完，服务就在后台跑着、ssh 断开也不停了。

@@ -1,4 +1,4 @@
-﻿# So-VITS-SVC 服务器独立部署项目
+# So-VITS-SVC 服务器独立部署项目
 
 独立部署的 so-vits-svc **推理 + 训练** Web 服务器，支持多用户登录、模型管理、
 推理配置、任务队列、一键部署。
@@ -20,6 +20,7 @@
 -  **特征检索**：训练完自动建 faiss 索引，推理时 `cluster_ratio` 检索混合，音色更稳
 -  **训练服务**：数据集 zip → 队列训练；**续训到指定步数**（主模型/扩散均可，任务列表一键续训）
 -  **多架构支持**：SoVITS v1 / RVC 轻量直连 / RVC-Flow（轻量 TransformerFlow，A1/A2 可切换），训练页选择
+-  **方案3统一流（NF+FM Hybrid 推理）**：在 rvc-flow A2 基础上新增「统一 Normalizing Flow + Flow Matching」架构，共享 FFT 骨干，推理可选 NF / FM / Hybrid 三模式；Hybrid 用 NF 快速定位 + FM 少步精修，质量接近纯 FM、速度接近纯 NF（详见 [docs/unified_flow.md](docs/unified_flow.md)）
 -  **中途停止测试**：训练中随时停止，自动保存当前 checkpoint 并注册为模型，马上推理试听
 -  **训练监控**：实时进度、G/D Loss 曲线（扩散单独曲线）、**验证集 loss**（判断过拟合）、近期速度 ETA
 -  **异常邮件确认**：判别器压制生成器 / Loss NaN 时发邮件，附"继续/停止"确认链接
@@ -54,6 +55,16 @@
 
 - `A1 特征先验流`（`flow_mode: "a1"`）：flow 正向变换特征，KL 约束到标准正态先验，用于架构对比
 - `A2 后验流`（`flow_mode: "a2"`，默认）：极小 enc_q（1 层 WN）从频谱提供后验，flow 做先验对齐，训练更稳
+
+**方案3统一流（`use_unified_flow: true`，基于 A2）**
+
+在 A2 后验流基础上，把原 TransformerCouplingBlock 替换为 `GeneralizedFlow`：用**同一组 FFT 骨干**同时承载 Normalizing Flow（可逆，channel-split coupling）与 Flow Matching（速度场，不可逆）两条路径，双输出头共享骨干参数。推理时三种模式可选：
+
+- `nf`：纯 NF 先验采样 + flow 逆变换（最快，与原 A2 行为一致）
+- `fm`：纯 FM，32 步欧拉积分从噪声到数据（质量上限最高，最慢）
+- `hybrid`（推荐）：NF 逆变换给出起点，FM 用少量步数（默认 4）精修，质量接近 FM、速度接近 NF
+
+FM 训练时用 NF 输出作为起点（保证训练/推理一致性），FM 输出头零初始化（初期 Hybrid ≈ NF，渐进学习速度场）。完整使用说明见 [docs/unified_flow.md](docs/unified_flow.md)。
 
 **checkpoint 架构校验**
 
@@ -167,6 +178,9 @@ sudo bash deploy_linux.sh
 | `arch` | 模型架构 | v1 / rvc / rvc-flow（见"模型架构"章节） |
 | `d_lr_scale` | 判别器 lr 缩放（前 1000 步） | rvc 系列建议 0.5，v1 用 1.0 |
 | `flow_mode` | rvc-flow 模式 | `a2`（推荐） |
+| `use_unified_flow` | 启用方案3统一流（NF+FM 共享骨干） | false（A2 用户按需开 true） |
+| `c_fm` | FM loss 权重（仅统一流） | 0.5（过小如 0.1 会让 FM 学不动） |
+| `hybrid_steps` | Hybrid 推理 FM 精修步数 | 4（2 快但质量略降，8+ 收益递减） |
 | `ema_decay` / `ema_interval` | EMA 权重衰减 / 更新间隔（推理用 EMA 更稳） | 0.999 / 100 |
 
 **扩散训练参数**（训扩散时）：`diff_epochs`（默认 100000，靠 loss/停止控制）、`diff_timesteps`（1000）、`diff_kstep`（浅扩散最大步，0=全量）、`diff_layers`/`diff_chans`/`diff_hidden`（网络容量，内存小就调小）、`diff_lr`、`diff_decay_step`、`diff_gamma`、`diff_amp`（fp32/fp16/bf16）。
@@ -188,6 +202,7 @@ sudo bash deploy_linux.sh
 | `enhancer` | NSF 增强 | 可选 |
 | `second_encoding` | 二次编码 | 一般关闭 |
 | `loudness_envelope` | 响度包络 | 0~1 |
+| `hybrid_mode` | 方案3推理模式（仅统一流模型生效） | `auto`（统一流→hybrid，否则→nf）；可选 `nf`/`fm`/`hybrid` |
 | `output_format` | 输出格式 | wav / mp3 / flac |
 
 **ONNX 导出**（可选，提升推理速度）：
@@ -196,7 +211,7 @@ sudo bash deploy_linux.sh
 python onnx_export_generator.py <模型.pth> <config.json> <输出.onnx>
 ```
 
-导出后把 `.onnx` 放到模型同目录（`模型名.pth.onnx`），推理时自动用 onnxruntime 跑生成器；文件缺失或加载失败时自动回退 PyTorch，不影响原有推理。
+导出后把 `.onnx` 放到模型同目录（`模型名.pth.onnx`），推理时自动用 onnxruntime 跑生成器；文件缺失或加载失败时自动回退 PyTorch，不影响原有推理。方案3统一流模型同样支持导出（按 config 的 `hybrid_steps` 展开 FM 欧拉积分循环），验证输出与 PyTorch 一致。
 
 ## 部署与运维
 
@@ -255,6 +270,11 @@ checkpoint 和配置的架构不一致（v1/rvc/rvc-flow 混用）。用匹配�
 **cluster 相关报错？**
 训练自动生成的 `*_cluster.pth` 是 faiss 检索索引，加载器会自动识别；手动上传 kmeans 模型也兼容。
 
+**方案3 Hybrid 推理听不清文字 / 全是噪声？**
+- 确认 checkpoint 是用「FM 一致性修复 + head_fm 零初始化」之后的版本
+- 早期 checkpoint（修复前）FM 从纯噪声起点训练，与推理起点不一致，会破坏语音
+- 详见 [docs/unified_flow.md](docs/unified_flow.md) FAQ 章节
+
 ## 目录结构
 
 ```
@@ -262,6 +282,7 @@ server/
 ├── server/              ← Flask 服务（app.py、模板、worker）
 ├── inference/ modules/ diffusion/ vencoder/ vdecoder/ cluster/
 ├── configs_template/    ← 训练配置模板
+├── docs/                ← 方案3统一流等设计文档
 ├── pretrain/            ← 预训练模型（不在 git 中）
 ├── train.py train_diff.py preprocess_*.py
 ├── deploy_linux.sh      ← Linux 一键部署（CUDA / ROCm / CPU 三选一，conda）
