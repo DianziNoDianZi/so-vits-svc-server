@@ -18,6 +18,7 @@ This project is a derivative of [so-vits-svc](https://github.com/svc-develop-tea
 - **Feature retrieval**: faiss index built automatically after training; `cluster_ratio` mixing at inference for more stable timbre
 - **Training**: dataset zip → queued training; **resume to a target step** (main model and diffusion, one-click from the task list)
 - **Multiple architectures**: SoVITS v1 / RVC direct / RVC-Flow (lightweight TransformerFlow, A1/A2 switchable), selectable on the training page
+- **Scheme-3 unified flow (NF+FM hybrid inference)**: a unified Normalizing Flow + Flow Matching architecture on top of rvc-flow A2, sharing one FFT backbone with dual output heads; inference can switch between NF / FM / Hybrid modes — Hybrid uses NF for fast positioning + a few FM refinement steps, approaching FM quality at near-NF speed (see [docs/unified_flow.md](docs/unified_flow.md))
 - **Stop & audition**: stop training anytime; the current checkpoint is saved as a model for immediate inference
 - **Monitoring**: live progress, G/D loss curves (separate diffusion curve), **validation loss** (overfitting check), recent-speed ETA
 - **Anomaly email confirmation**: when the discriminator crushes the generator or loss goes NaN, an email with continue/stop confirmation links is sent
@@ -51,6 +52,16 @@ Adds a lightweight TransformerFlow on top of the direct path to enhance feature 
 
 - `A1 feature-prior flow` (`flow_mode: "a1"`): flow transforms features forward, KL constrained to a standard-normal prior (for architecture comparison)
 - `A2 posterior flow` (`flow_mode: "a2"`, default): a tiny enc_q (1-layer WN) provides the posterior from the spectrogram, flow aligns it to the prior; more stable training
+
+**Scheme-3 unified flow (`use_unified_flow: true`, built on A2)**
+
+Replaces the original TransformerCouplingBlock with `GeneralizedFlow`: a single shared FFT backbone carries both Normalizing Flow (reversible, channel-split coupling) and Flow Matching (velocity field, non-reversible) via dual output heads sharing backbone parameters. Three inference modes:
+
+- `nf`: pure NF prior sampling + flow inverse (fastest, same as original A2)
+- `fm`: pure FM, 32-step Euler integration from noise to data (highest quality ceiling, slowest)
+- `hybrid` (recommended): NF inverse gives the start point, FM refines it with a few steps (default 4) — near-FM quality at near-NF speed
+
+FM training uses the NF output as its start point (training/inference consistency), and the FM output head is zero-initialized (early Hybrid ≈ NF, gradually learning the velocity field). Full usage guide: [docs/unified_flow.md](docs/unified_flow.md).
 
 **Checkpoint architecture validation**
 
@@ -136,6 +147,9 @@ The script installs ffmpeg / libsndfile / cmake and other system deps, and sets 
 | `arch` | model architecture | v1 / rvc / rvc-flow (see Architecture section) |
 | `d_lr_scale` | discriminator LR scale (first 1000 steps) | 0.5 for rvc family, 1.0 for v1 |
 | `flow_mode` | rvc-flow mode | `a2` (recommended) |
+| `use_unified_flow` | enable Scheme-3 unified flow (shared NF+FM backbone) | false (A2 users set true as needed) |
+| `c_fm` | FM loss weight (unified flow only) | 0.5 (too small e.g. 0.1 → FM can't learn) |
+| `hybrid_steps` | FM refinement steps for hybrid inference | 4 (2 faster but lower quality; 8+ diminishing) |
 
 Diffusion training params: `diff_epochs`, `diff_timesteps` (1000), `diff_kstep` (0=full), `diff_layers/chans/hidden`, `diff_lr`, `diff_decay_step`, `diff_gamma`, `diff_amp`.
 
@@ -151,6 +165,7 @@ Diffusion training params: `diff_epochs`, `diff_timesteps` (1000), `diff_kstep` 
 | `noise_scale` | generation noise | 0.4; 0.25 if harsh |
 | `pad_seconds` | segment padding | 0.5 |
 | `enhancer` / `second_encoding` / `loudness_envelope` | optional post-processing | usually off |
+| `hybrid_mode` | Scheme-3 inference mode (unified-flow models only) | `auto` (unified→hybrid, else→nf); options `nf`/`fm`/`hybrid` |
 | `output_format` | output format | wav / mp3 / flac |
 
 ## Deployment & Ops
@@ -175,6 +190,7 @@ Data safety: weights, database, keys and logs never enter git (see .gitignore). 
 - **Task stuck at running?** Model loading on CPU takes 1~2 min with no progress; you can stop and resubmit; queued tasks auto-recover after restart.
 - **OOM on small servers?** Set `INFERENCE_MODEL_CACHE=1`, `cluster_ratio=0`, lower training batch_size.
 - **Cluster-related errors?** Auto-generated `*_cluster.pth` is a faiss retrieval index; the loader auto-detects it and also accepts manually uploaded kmeans models.
+- **Scheme-3 Hybrid inference unintelligible / all noise?** Make sure the checkpoint is from after the "FM consistency fix + head_fm zero-init" — early checkpoints trained FM from a pure-noise start point that doesn't match inference, which corrupts speech. See [docs/unified_flow.md](docs/unified_flow.md) FAQ.
 
 ## Directory Layout
 
@@ -183,6 +199,7 @@ server/
 ├── server/              ← Flask app (app.py, templates, workers)
 ├── inference/ modules/ diffusion/ vencoder/ vdecoder/ cluster/
 ├── configs_template/    ← training config templates
+├── docs/                ← design docs (unified flow, etc.)
 ├── pretrain/            ← pretrained models (not in git)
 ├── train.py train_diff.py preprocess_*.py
 ├── deploy_linux.sh      ← Linux one-click deploy (CUDA / ROCm / CPU, conda)
