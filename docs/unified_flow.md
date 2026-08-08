@@ -1,6 +1,6 @@
-# 方案3：统一 NF+FM Flow（Unified Flow）使用文档
+# 统一流（Unified NF+FM Flow）使用文档
 
-本仓库在 RVC-Flow (A2) 基础上新增了「方案3 统一流」架构：用**同一组 FFT 骨干**同时承载
+本仓库在 RVC-Flow (A2) 基础上新增了「统一流」架构：用**同一组 FFT 骨干**同时承载
 Normalizing Flow (NF) 与 Flow Matching (FM) 两条路径，推理时以 **Hybrid 模式**（NF 快速定位 +
 FM 少步精修）兼顾速度与质量。
 
@@ -28,7 +28,7 @@ FM 少步精修）兼顾速度与质量。
 ```json
 {
   "model": {
-    "use_unified_flow": true,   // 是否启用方案3统一流；false 时走原 A2 TransformerCouplingBlock
+    "use_unified_flow": true,   // 是否启用统一流；false 时走原 A2 TransformerCouplingBlock
     "hybrid_steps": 4,          // Hybrid 推理的 FM 精修步数（推荐 2~4，详见第 5 节）
     "time_embed_dim": 128       // FM 时间嵌入维度
   },
@@ -48,7 +48,7 @@ FM 少步精修）兼顾速度与质量。
 
 ## 3. 训练
 
-启用方案3只需把 `use_unified_flow` 设为 `true`，其余训练流程不变：
+启用统一流只需把 `use_unified_flow` 设为 `true`，其余训练流程不变：
 
 ```bash
 python train.py -c logs/<task>/config.json -m <task>
@@ -104,7 +104,7 @@ audio = svc.slice_inference(
     slice_db=-40, cluster_infer_ratio=0,
     auto_predict_f0=False, noice_scale=0.4,
     f0_predictor='pm',
-    # 方案3推理模式：'auto' | 'nf' | 'fm' | 'hybrid'
+    # 统一流推理模式：'auto' | 'nf' | 'fm' | 'hybrid'
     hybrid_mode='hybrid',
 )
 ```
@@ -120,7 +120,7 @@ audio = svc.slice_inference(
 
 ### 4.3 推理 Worker
 
-`server/inference_worker.py` 默认走 `hybrid_mode='auto'`：加载的模型若为方案3则自动用 Hybrid。
+`server/inference_worker.py` 默认走 `hybrid_mode='auto'`：加载的模型若为统一流则自动用 Hybrid。
 若需显式指定模式，在调用 `svc.slice_inference(...)` 时传入 `hybrid_mode`。
 
 ### 4.4 EMA 权重推理
@@ -223,6 +223,6 @@ python onnx_export_generator.py <G_*.pth> <config.json> <out.onnx>
 | `train.py` | FM loss 分支、8 元组解包、`c_fm` 加权 |
 | `inference/infer_tool.py` | `Svc.infer` / `slice_inference` 的 `hybrid_mode` / `hybrid_steps` 切换 |
 | `utils.py` | EMA checkpoint 读写（`use_ema`）、tensorboard 安全 `summarize` |
-| `configs_template/config_template.json` | 方案3 config 模板字段 |
+| `configs_template/config_template.json` | 统一流 config 模板字段 |
 | `experiments/real_audio_test.py` | 三模式真实音频推理 + HF 检测示例 |
 | `experiments/phase*_report.md` | 各阶段验证报告 |
