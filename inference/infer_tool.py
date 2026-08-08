@@ -300,7 +300,9 @@ class Svc(object):
               frame = 0,
               spk_mix = False,
               second_encoding = False,
-              loudness_envelope_adjustment = 1
+              loudness_envelope_adjustment = 1,
+              hybrid_mode='auto',
+              hybrid_steps=None
               ):
         torchaudio.set_audio_backend("soundfile")
         wav, sr = torchaudio.load(raw_path)
@@ -329,7 +331,18 @@ class Svc(object):
             vol = None
             if not self.only_diffusion:
                 vol = self.volume_extractor.extract(torch.FloatTensor(wav).to(self.dev)[None,:])[None,:].to(self.dev) if self.vol_embedding else None
-                audio,f0 = self.net_g_ms.infer(c, f0=f0, g=sid, uv=uv, predict_f0=auto_predict_f0, noice_scale=noice_scale,vol=vol)
+                # 方案3：hybrid 推理模式切换（auto/nf/fm/hybrid）
+                net_g = self.net_g_ms
+                use_unified = getattr(net_g, 'use_unified_flow', False)
+                _mode = hybrid_mode
+                if _mode == 'auto':
+                    _mode = 'hybrid' if use_unified else 'nf'
+                if _mode == 'nf' or not use_unified:
+                    audio,f0 = net_g.infer(c, f0=f0, g=sid, uv=uv, predict_f0=auto_predict_f0, noice_scale=noice_scale,vol=vol)
+                elif _mode == 'fm':
+                    audio,f0 = net_g.infer_hybrid(c, f0=f0, g=sid, uv=uv, noice_scale=noice_scale, hybrid_steps=32, vol=vol)
+                else:  # hybrid
+                    audio,f0 = net_g.infer_hybrid(c, f0=f0, g=sid, uv=uv, noice_scale=noice_scale, hybrid_steps=hybrid_steps, vol=vol)
                 audio = audio[0,0].data.float()
                 audio_mel = self.vocoder.extract(audio[None,:],self.target_sample) if self.shallow_diffusion else None
             else:
@@ -406,7 +419,9 @@ class Svc(object):
                         k_step = 100,
                         use_spk_mix = False,
                         second_encoding = False,
-                        loudness_envelope_adjustment = 1
+                        loudness_envelope_adjustment = 1,
+                        hybrid_mode='auto',
+                        hybrid_steps=None
                         ):
         if use_spk_mix:
             if len(self.spk2id) == 1:
@@ -513,7 +528,9 @@ class Svc(object):
                                                     frame = global_frame,
                                                     spk_mix = use_spk_mix,
                                                     second_encoding = second_encoding,
-                                                    loudness_envelope_adjustment = loudness_envelope_adjustment
+                                                    loudness_envelope_adjustment = loudness_envelope_adjustment,
+                                                    hybrid_mode = hybrid_mode,
+                                                    hybrid_steps = hybrid_steps
                                                     )
                 global_frame += out_frame
                 _audio = out_audio.cpu().numpy()

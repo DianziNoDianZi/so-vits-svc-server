@@ -92,6 +92,180 @@ class TransformerCouplingBlock(nn.Module):
         return x
 
 
+class GeneralizedCouplingLayer(nn.Module):
+    """
+    统一 NF + FM 的耦合层（方案3）
+    共享 FFT 骨干，双输出头：
+      - NF 路径：通道拆分 coupling（x0 不变，x1 += shift(x0)），严格可逆
+      - FM 路径：速度场看整个 x + 时间嵌入，不需可逆
+    """
+    def __init__(self, channels, hidden_channels, kernel_size,
+                 dilation_rate, n_layers, gin_channels=0,
+                 mean_only=True):
+        super().__init__()
+        assert channels % 2 == 0, "channels should be divisible by 2"
+        self.channels = channels
+        self.hidden_channels = hidden_channels
+        self.gin_channels = gin_channels
+        self.mean_only = mean_only
+        self.half_channels = channels // 2
+
+        # 共享 FFT 骨干（复用现有 attentions.FFT，isflow=True 以支持 g 条件）
+        # FFT 输入维度 = hidden_channels；NF 路径先 pre 投影 half→hidden，FM 路径用 proj_fm 投影 channels→hidden
+        self.fft = attentions.FFT(
+            hidden_channels, hidden_channels * 4,
+            n_heads=2, n_layers=n_layers,
+            kernel_size=kernel_size,
+            p_dropout=0, isflow=True,
+            gin_channels=gin_channels
+        )
+
+        # NF 路径：half_channels -> hidden（pre）和 hidden -> half_channels（post，mean-only shift）
+        self.pre_nf = nn.Conv1d(self.half_channels, hidden_channels, 1)
+        self.post_nf = nn.Conv1d(hidden_channels, self.half_channels, 1)
+        self.post_nf.weight.data.zero_()
+        self.post_nf.bias.data.zero_()
+
+        # FM 路径：channels -> hidden（pre）和 hidden -> channels（速度场输出）
+        # head_fm 零初始化：FM 从恒等映射（v=0）开始，渐进学习速度场
+        # 这样 Hybrid 初期 = NF，不会因 FM 随机输出破坏语音
+        self.pre_fm = nn.Conv1d(channels, hidden_channels, 1)
+        self.head_fm = nn.Conv1d(hidden_channels, channels, 1)
+        self.head_fm.weight.data.zero_()
+        self.head_fm.bias.data.zero_()
+
+        # 时间嵌入投影（FM 专用）
+        self.time_mlp = nn.Sequential(
+            nn.Linear(1, hidden_channels),
+            nn.SiLU(),
+            nn.Linear(hidden_channels, hidden_channels)
+        )
+
+    def forward(self, x, x_mask, g=None, t=None, mode='both', reverse=False):
+        """
+        Args:
+            x: [B, C, L] 输入
+            x_mask: [B, 1, L] 掩码
+            g: [B, gin_channels, 1] 条件（FFT 内部会 cond_layer 投影）
+            t: [B, 1] 时间（FM 专用，NF 模式下为 None）
+            mode: 'nf' | 'fm' | 'both'
+            reverse: bool，NF 模式下是否逆变换
+
+        Returns:
+            mode='nf':   (x_out, logdet)
+            mode='fm':   (v_field,)
+            mode='both': (x_out, logdet, v_field)
+        """
+        results = {}
+
+        # NF 路径：通道拆分 coupling，shift 只依赖 x0（不变半），严格可逆
+        if mode in ('nf', 'both'):
+            x0, x1 = torch.split(x, [self.half_channels] * 2, 1)
+            h = self.pre_nf(x0) * x_mask
+            h = self.fft(h, x_mask, g=g)
+            shift = self.post_nf(h) * x_mask  # mean-only
+            if not reverse:
+                x1 = x1 + shift
+            else:
+                x1 = x1 - shift
+            x_out = torch.cat([x0, x1], 1)
+            logdet = torch.zeros(x.shape[0], 1, x.shape[2], device=x.device)
+            results['nf'] = (x_out, logdet)
+
+        # FM 路径：看整个 x + 时间嵌入，输出速度场
+        if mode in ('fm', 'both'):
+            t_bias = 0
+            if t is not None:
+                t_emb = self.time_mlp(t)  # [B, hidden]
+                t_bias = t_emb.unsqueeze(-1)  # [B, hidden, 1]
+            h = self.pre_fm(x) * x_mask
+            h = self.fft(h + t_bias * x_mask, x_mask, g=g)
+            v_fm = self.head_fm(h) * x_mask
+            results['fm'] = v_fm
+
+        # 返回
+        if mode == 'nf':
+            return results['nf']
+        elif mode == 'fm':
+            return results['fm']
+        else:  # both
+            return results['nf'][0], results['nf'][1], results['fm']
+
+
+class GeneralizedFlow(nn.Module):
+    """
+    统一 NF + FM 的流容器（方案3）
+    包装多个 GeneralizedCouplingLayer + Flip
+    """
+    def __init__(self, channels, hidden_channels, kernel_size,
+                 dilation_rate, n_layers, n_flows=4,
+                 gin_channels=0, share_parameter=False):
+        super().__init__()
+        self.channels = channels
+        self.hidden_channels = hidden_channels
+        self.gin_channels = gin_channels
+        self.n_flows = n_flows
+
+        self.flows = nn.ModuleList()
+        for i in range(n_flows):
+            self.flows.append(
+                GeneralizedCouplingLayer(
+                    channels, hidden_channels, kernel_size,
+                    dilation_rate, n_layers, gin_channels
+                )
+            )
+            self.flows.append(modules.Flip())
+
+    def forward(self, x, x_mask, g=None, t=None, mode='both', reverse=False):
+        """
+        Args:
+            x: [B, C, L]
+            x_mask: [B, 1, L]
+            g: [B, gin_channels, 1]
+            t: [B, 1] or None
+            mode: 'nf' | 'fm' | 'both'
+            reverse: bool
+
+        Returns:
+            mode='nf':   (x, logdet)
+            mode='fm':   v_field
+            mode='both': (x, logdet, v_field)
+        """
+        logdet_total = 0
+        v_accum = 0
+
+        if not reverse:
+            for flow in self.flows:
+                if isinstance(flow, modules.Flip):
+                    # Flip forward 返回 (x, logdet)
+                    x, _ = flow(x, x_mask, g=g, reverse=False)
+                    continue
+
+                if mode in ('nf', 'both'):
+                    x, ld = flow(x, x_mask, g=g, t=t, mode='nf', reverse=False)
+                    logdet_total = logdet_total + ld
+                if mode in ('fm', 'both'):
+                    _, _, v = flow(x, x_mask, g=g, t=t, mode='both', reverse=False)
+                    v_accum = v_accum + v
+        else:
+            for flow in reversed(self.flows):
+                if isinstance(flow, modules.Flip):
+                    # Flip reverse 只返回 x
+                    x = flow(x, x_mask, g=g, reverse=True)
+                    continue
+
+                if mode in ('nf', 'both'):
+                    x, ld = flow(x, x_mask, g=g, t=t, mode='nf', reverse=True)
+                    logdet_total = logdet_total + ld
+
+        if mode == 'nf':
+            return x, logdet_total
+        elif mode == 'fm':
+            return v_accum
+        else:
+            return x, logdet_total, v_accum
+
+
 class Encoder(nn.Module):
     def __init__(self,
                  in_channels,
@@ -729,6 +903,8 @@ class SynthesizerTrnRvcFlow(nn.Module):
                  use_transformer_flow=True,
                  flow_mode='a2',
                  enc_q_hidden=96,
+                 use_unified_flow=False,
+                 hybrid_steps=4,
                  **kwargs):
         super().__init__()
         self.spec_channels = spec_channels
@@ -742,6 +918,9 @@ class SynthesizerTrnRvcFlow(nn.Module):
         self.character_mix = False
         self.arch_name = 'rvc-flow'
         self.flow_mode = flow_mode
+        # 方案3：统一 NF+FM 流
+        self.use_unified_flow = use_unified_flow
+        self.hybrid_steps = hybrid_steps
 
         self.emb_g = nn.Embedding(n_speakers, gin_channels)
         self.emb_uv = nn.Embedding(2, hidden_channels)
@@ -777,10 +956,20 @@ class SynthesizerTrnRvcFlow(nn.Module):
             self.dec = Generator(h=hps)
 
         # 轻量 TransformerFlow（affine coupling + FFT）
-        self.flow = TransformerCouplingBlock(
-            inter_channels, hidden_channels, filter_channels, n_heads,
-            n_layers_trans_flow, 5, p_dropout, n_flow_layer,
-            gin_channels=gin_channels, share_parameter=flow_share_parameter)
+        if use_unified_flow:
+            # 方案3：用 GeneralizedFlow 替换 TransformerCouplingBlock
+            # gin_channels 与现有 flow 一致（speaker embedding 通道）
+            self.flow = GeneralizedFlow(
+                inter_channels, hidden_channels,
+                kernel_size=5, dilation_rate=1,
+                n_layers=n_layers_trans_flow, n_flows=n_flow_layer,
+                gin_channels=gin_channels
+            )
+        else:
+            self.flow = TransformerCouplingBlock(
+                inter_channels, hidden_channels, filter_channels, n_heads,
+                n_layers_trans_flow, 5, p_dropout, n_flow_layer,
+                gin_channels=gin_channels, share_parameter=flow_share_parameter)
 
         if flow_mode == 'a2':
             self.enc_q = _LightPosteriorEncoder(
@@ -804,16 +993,42 @@ class SynthesizerTrnRvcFlow(nn.Module):
         x_mask = torch.unsqueeze(commons.sequence_mask(c_lengths, c.size(2)), 1).to(c.dtype)
         x = self.pre(c) * x_mask + self.emb_uv(uv.long()).transpose(1, 2) + vol
 
+        # 方案3 FM loss（默认 0，use_unified_flow+training 时才计算）
+        loss_flow_match = 0
+
         if self.flow_mode == 'a2':
             # 后验：enc_q(spec)；flow 对齐先验；dec 用后验样本（v1 式）
             z_q, m_q, logs_q, spec_mask = self.enc_q(spec, spec_lengths, g=g)
-            z_p = self.flow(z_q, spec_mask, g=g)
+            if self.use_unified_flow:
+                # GeneralizedFlow：NF 模式返回 (x, logdet)，取 x
+                z_p, _ = self.flow(z_q, spec_mask, g=g, mode='nf', reverse=False)
+            else:
+                z_p = self.flow(z_q, spec_mask, g=g)
             stats = self.prior_proj(x) * x_mask
             m_p, logs_p = torch.split(stats, self.inter_channels, dim=1)
             x_slice, pitch_slice, ids_slice = commons.rand_slice_segments_with_pitch(
                 z_q, f0, spec_lengths, self.segment_size)
             o = self.dec(x_slice, g=g, f0=pitch_slice)
-            return o, ids_slice, spec_mask, (z_q, z_p, m_p, logs_p, m_q, logs_q), 0, 0, 0
+
+            # 方案3：FM 路径（只在 use_unified_flow + training 时计算）
+            if self.use_unified_flow and self.training:
+                # FM 学习从 NF 输出(x_0)到真实 z_q(x_1)的精修速度场
+                # x_1 = 真实后验样本
+                x_1 = z_q.detach()
+                # x_0 = NF 逆变换输出（与推理时的 Hybrid 起点一致）
+                # 先验采样 + NF 逆变换，模拟推理时的起点
+                z_p_fm = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * 0.35
+                x_0, _ = self.flow(z_p_fm, spec_mask, g=g, mode='nf', reverse=True)
+                x_0 = x_0.detach()  # 切断 FM 到 NF 的梯度
+                t = torch.rand(x_1.shape[0], 1, 1, device=x_1.device)
+                x_t = (1 - t) * x_0 + t * x_1
+                u_t = x_1 - x_0
+                # GeneralizedFlow 的 FM 模式预测速度场
+                v_pred = self.flow(x_t, spec_mask, g=g, t=t.squeeze(-1), mode='fm')
+                # 命名为 loss_flow_match，避免与 train.py 已有的 loss_fm=feature_loss 混淆
+                loss_flow_match = F.mse_loss(v_pred * spec_mask, u_t * spec_mask)
+
+            return o, ids_slice, spec_mask, (z_q, z_p, m_p, logs_p, m_q, logs_q), 0, 0, 0, loss_flow_match
         else:
             # A1：flow 正向编码特征，KL 约束到标准正态先验
             z_p = self.flow(x, x_mask, g=g)
@@ -821,7 +1036,7 @@ class SynthesizerTrnRvcFlow(nn.Module):
                 z_p, f0, c_lengths, self.segment_size)
             o = self.dec(x_slice, g=g, f0=pitch_slice)
             zeros = torch.zeros_like(z_p)
-            return o, ids_slice, x_mask, (z_p, z_p, zeros, zeros, None, zeros), 0, 0, 0
+            return o, ids_slice, x_mask, (z_p, z_p, zeros, zeros, None, zeros), 0, 0, 0, loss_flow_match
 
     @torch.no_grad()
     def infer(self, c, f0, uv, g=None, noice_scale=0.35, seed=52468, predict_f0=False, vol=None):
@@ -850,10 +1065,79 @@ class SynthesizerTrnRvcFlow(nn.Module):
             stats = self.prior_proj(x) * x_mask
             m_p, logs_p = torch.split(stats, self.inter_channels, dim=1)
             z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noice_scale
-            z = self.flow(z_p, x_mask, g=g, reverse=True)
+            if self.use_unified_flow:
+                # GeneralizedFlow：NF 逆变换返回 (x, logdet)，取 x
+                z, _ = self.flow(z_p, x_mask, g=g, mode='nf', reverse=True)
+            else:
+                z = self.flow(z_p, x_mask, g=g, reverse=True)
             o = self.dec(z, g=g, f0=f0)
         else:
             # A1：flow 正向（与训练一致，特征信息完整保留）
             z_p = self.flow(x, x_mask, g=g)
             o = self.dec(z_p, g=g, f0=f0)
+        return o, f0
+
+    @torch.no_grad()
+    def infer_hybrid(self, c, f0, uv, g=None, noice_scale=0.35, seed=52468,
+                     hybrid_steps=None, vol=None):
+        """
+        Hybrid 推理（方案3）：NF 快速定位 + FM 少步精修
+        仅在 use_unified_flow=True 时有意义；若未启用则退化为纯 NF。
+
+        Args:
+            c: content features [B, ssl_dim, L]
+            f0: f0 [B, L]
+            uv: uv flag [B, L]
+            g: speaker id（emb_g 输入）
+            noice_scale: 先验采样噪声缩放
+            hybrid_steps: FM 精修步数（None → 从 config 读 self.hybrid_steps）
+            vol: 音量
+
+        Returns:
+            o: 音频 [B, 1, T]
+        """
+        if c.device == torch.device("cuda"):
+            torch.cuda.manual_seed_all(seed)
+        else:
+            torch.manual_seed(seed)
+
+        if hybrid_steps is None:
+            hybrid_steps = getattr(self, 'hybrid_steps', 4)
+
+        c_lengths = (torch.ones(c.size(0)) * c.size(-1)).to(c.device)
+        if self.character_mix and len(g) > 1:
+            g = g.reshape((g.shape[0], g.shape[1], 1, 1, 1))
+            g = g * self.speaker_map
+            g = torch.sum(g, dim=1)
+            g = g.transpose(0, -1).transpose(0, -2).squeeze(0)
+        else:
+            if g.dim() == 1:
+                g = g.unsqueeze(0)
+            g = self.emb_g(g).transpose(1, 2)
+
+        x_mask = torch.unsqueeze(commons.sequence_mask(c_lengths, c.size(2)), 1).to(c.dtype)
+        vol = self.emb_vol(vol[:, :, None]).transpose(1, 2) if vol is not None and self.vol_embedding else 0
+        x = self.pre(c) * x_mask + self.emb_uv(uv.long()).transpose(1, 2) + vol
+
+        # Step 1: 先验采样 + NF 逆变换（快速给起点）
+        stats = self.prior_proj(x) * x_mask
+        m_p, logs_p = torch.split(stats, self.inter_channels, dim=1)
+        z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noice_scale
+
+        if self.use_unified_flow:
+            # GeneralizedFlow：NF 逆变换返回 (x, logdet)
+            x_t, _ = self.flow(z_p, x_mask, g=g, mode='nf', reverse=True)
+            # Step 2: FM 精修（hybrid_steps 步欧拉积分，从 t=0→1）
+            dt = 1.0 / max(hybrid_steps, 1)
+            for i in range(max(hybrid_steps, 1)):
+                t_val = float(i) / max(hybrid_steps, 1)
+                t = torch.full((x_t.size(0), 1), t_val, device=x_t.device)
+                v = self.flow(x_t, x_mask, g=g, t=t, mode='fm')
+                x_t = x_t + v * dt
+        else:
+            # 未启用方案3：退化为纯 NF 逆变换
+            x_t = self.flow(z_p, x_mask, g=g, reverse=True)
+
+        # Step 3: Decoder → 音频
+        o = self.dec(x_t * x_mask, g=g, f0=f0)
         return o, f0

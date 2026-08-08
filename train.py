@@ -92,8 +92,12 @@ def run(rank, n_gpus, hps):
         logger = utils.get_logger(hps.model_dir)
         logger.info(hps)
         utils.check_git_hash(hps.model_dir)
-        writer = SummaryWriter(log_dir=hps.model_dir)
-        writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval"))
+        # 禁用 tensorboard 写入（磁盘空间限制），用 no-op 替代
+        if os.environ.get('SSVC_NO_TENSORBOARD', '0') == '1':
+            writer = writer_eval = None
+        else:
+            writer = SummaryWriter(log_dir=hps.model_dir)
+            writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval"))
     
     single = n_gpus <= 1
     if not single:
@@ -128,9 +132,6 @@ def run(rank, n_gpus, hps):
         hps.data.filter_length // 2 + 1,
         hps.train.segment_size // hps.data.hop_length,
         **hps.model).to(device)
-    # EMA 权重副本：不动训练逻辑，每 ema_interval 步并入一次，推理时可用更稳的 EMA 权重
-    ema_decay = float(getattr(hps.train, 'ema_decay', 0.999) or 0.999)
-    net_g.ema = utils.EMA(net_g, decay=ema_decay)
     net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm).to(device)
     optim_g = torch.optim.AdamW(
         net_g.parameters(),
@@ -174,6 +175,11 @@ def run(rank, n_gpus, hps):
         epoch_str = 1
         global_step = 0
         global_step = 0
+
+    # EMA 权重副本：必须在底模加载之后初始化，否则 shadow 会从随机值开始
+    ema_decay = float(getattr(hps.train, 'ema_decay', 0.999) or 0.999)
+    _g_for_ema = net_g.module if hasattr(net_g, 'module') else net_g
+    _g_for_ema.ema = utils.EMA(_g_for_ema, decay=ema_decay)
 
     warmup_epoch = hps.train.warmup_epochs
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
@@ -241,7 +247,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         
         with autocast(enabled=hps.train.fp16_run, dtype=half_type):
             y_hat, ids_slice, z_mask, \
-            (z, z_p, m_p, logs_p, m_q, logs_q), pred_lf0, norm_lf0, lf0 = net_g(c, f0, uv, spec, g=g, c_lengths=lengths,
+            (z, z_p, m_p, logs_p, m_q, logs_q), pred_lf0, norm_lf0, lf0, loss_flow_match = net_g(c, f0, uv, spec, g=g, c_lengths=lengths,
                                                                                 spec_lengths=lengths,vol = volume)
 
             y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
@@ -283,6 +289,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 _g = net_g.module if hasattr(net_g, 'module') else net_g
                 loss_lf0 = F.mse_loss(pred_lf0, lf0) if _g.use_automatic_f0_prediction else 0
                 loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl + loss_lf0
+                # 方案3：flow matching loss 加权（loss_fm 是 feature matching，不要混淆）
+                if getattr(_g, 'use_unified_flow', False) and isinstance(loss_flow_match, torch.Tensor):
+                    c_fm = float(getattr(hps.train, 'c_fm', 0.3))
+                    loss_gen_all = loss_gen_all + c_fm * loss_flow_match
         optim_g.zero_grad()
         scaler.scale(loss_gen_all).backward()
         scaler.unscale_(optim_g)
@@ -309,6 +319,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     epoch,
                     100. * batch_idx / len(train_loader)))
                 logger.info(f"Losses: {[x.item() for x in losses]}, step: {global_step}, lr: {lr}, reference_loss: {reference_loss}")
+                # 方案3：打印 flow matching loss
+                if isinstance(loss_flow_match, torch.Tensor):
+                    logger.info(f"FlowMatch Loss: {loss_flow_match.item():.6f}")
 
                 # auto_stop：loss 在 auto_stop 步内无改善则提前停止
                 auto_stop = getattr(hps.train, 'auto_stop', 0) or 0

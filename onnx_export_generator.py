@@ -30,6 +30,9 @@ class GeneratorOnnx(nn.Module):
         self.arch = getattr(net_g, 'arch_name', 'v1')
         self.flow_mode = getattr(net_g, 'flow_mode', '')
         self.inter = net_g.inter_channels
+        # 方案3统一流：导出时按固定 hybrid_steps 展开 FM 欧拉积分
+        self.use_unified = getattr(net_g, 'use_unified_flow', False)
+        self.hybrid_steps = getattr(net_g, 'hybrid_steps', 4)
 
     def _emb_g(self, g):
         if g.dim() == 1:
@@ -51,7 +54,20 @@ class GeneratorOnnx(nn.Module):
                 stats = net.prior_proj(x) * x_mask
                 m_p, logs_p = torch.split(stats, self.inter, dim=1)
                 z_p = m_p + noise * torch.exp(logs_p) * 0.35
-                z = net.flow(z_p, x_mask, g=gg, reverse=True)
+                if self.use_unified:
+                    # 方案3 hybrid：NF 逆变换(mode='nf')给出起点，FM 欧拉积分精修
+                    # mode='nf' 返回 (x, logdet)，取 x
+                    x_t = net.flow(z_p, x_mask, g=gg, mode='nf', reverse=True)[0]
+                    dt = 1.0 / self.hybrid_steps
+                    for i in range(self.hybrid_steps):
+                        # t 用 [1,1] 常量，靠广播适配任意 batch（ONNX 友好）
+                        t_val = float(i) / self.hybrid_steps
+                        t = torch.full((1, 1), t_val, device=x_t.device)
+                        v = net.flow(x_t, x_mask, g=gg, t=t, mode='fm')
+                        x_t = x_t + v * dt
+                    z = x_t
+                else:
+                    z = net.flow(z_p, x_mask, g=gg, reverse=True)
             else:
                 z = net.flow(x, x_mask, g=gg)
             return net.dec(z, g=gg, f0=f0)

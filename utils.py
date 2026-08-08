@@ -12,7 +12,6 @@ import sys
 import traceback
 from multiprocessing import cpu_count
 
-import faiss
 import librosa
 import numpy as np
 import torch
@@ -207,6 +206,7 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False
     else:
         state_dict = model.state_dict()
     mismatch_count = 0
+    mismatched_keys = set()
     new_state_dict = {}
     for k, v in state_dict.items():
         try:
@@ -215,6 +215,7 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False
         except Exception:
             if "enc_q" not in k or "emb_g" not in k:
               mismatch_count += 1
+              mismatched_keys.add(k)
               if mismatch_count <= 3:
                   logger.info("%s is not in the checkpoint" % k)
               new_state_dict[k] = v
@@ -227,25 +228,40 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False
     # EMA 副本：续训恢复状态；推理 use_ema=True 时直接用 EMA 权重覆盖参数
     ema_sd = checkpoint_dict.get('ema')
     if isinstance(ema_sd, dict) and 'shadow' in ema_sd:
+        shadow = ema_sd.get('shadow', {})
+        target = model.module if hasattr(model, 'module') else model
         if hasattr(model, 'ema') and model.ema is not None:
-            try:
-                model.ema.load_state_dict(ema_sd)
-                # 恢复的 shadow 来自 CPU checkpoint，需同步到模型所在设备（否则 EMA.update 会 device mismatch）
-                _dev_model = model.module if hasattr(model, 'module') else model
-                for _name, _p in _dev_model.named_parameters():
-                    if _name in model.ema.shadow:
-                        model.ema.shadow[_name] = model.ema.shadow[_name].to(_p.device)
-            except Exception:
-                pass
+            # 续训：重置 EMA shadow 为当前加载的参数。
+            # 旧版 train.py 在底模加载前初始化 EMA，导致 shadow 从随机值开始，
+            # 保存进 checkpoint 后完全不可用，这里覆盖为正确参数让 EMA 重新跟踪。
+            _param_map = dict(target.named_parameters())
+            for _name, _p in _param_map.items():
+                if _name in model.ema.shadow:
+                    model.ema.shadow[_name] = _p.detach().clone().to(model.ema.shadow[_name].device)
         if use_ema:
-            shadow = ema_sd.get('shadow', {})
-            target = model.module if hasattr(model, 'module') else model
-            for name, param in target.named_parameters():
-                if name in shadow:
-                    try:
-                        param.data.copy_(shadow[name].to(param.device))
-                    except Exception:
-                        pass
+            # 检测 EMA shadow 是否可靠：旧版训练 bug 导致 shadow 从随机值开始，
+            # 与模型参数差异极大（>50%）。不可靠时跳过覆盖，用训练后的原始参数。
+            _reliable = True
+            _checked = 0
+            for _name, _param in target.named_parameters():
+                if _name in shadow and _checked < 10:
+                    _s = shadow[_name].to(_param.device).float()
+                    _p = _param.data.float()
+                    if _s.shape == _p.shape:
+                        _ratio = (_s - _p).abs().mean().item() / (_p.abs().mean().item() + 1e-8)
+                        if _ratio > 0.5:
+                            _reliable = False
+                            break
+                        _checked += 1
+            if _reliable:
+                for name, param in target.named_parameters():
+                    if name in shadow:
+                        try:
+                            param.data.copy_(shadow[name].to(param.device))
+                        except Exception:
+                            pass
+            else:
+                logger.info("EMA shadow 与模型参数差异过大，跳过 EMA 覆盖（EMA 初始化时机 bug）")
     print("load ")
     logger.info("Loaded checkpoint '{}' (iteration {})".format(
         checkpoint_path, iteration))
@@ -300,6 +316,8 @@ def clean_checkpoints(path_to_models='logs/44k/', n_ckpts_to_keep=2, sort_by_tim
   [del_routine(fn) for fn in to_del]
 
 def summarize(writer, global_step, scalars={}, histograms={}, images={}, audios={}, audio_sampling_rate=22050):
+  if writer is None:
+    return
   for k, v in scalars.items():
     writer.add_scalar(k, v, global_step)
   for k, v in histograms.items():
@@ -534,6 +552,7 @@ def change_rms(data1, sr1, data2, sr2, rate):  # 1是输入音频，2是输出�
     return data2
 
 def train_index(spk_name,root_dir = "dataset/44k/"):  #from: RVC https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI
+    import faiss
     n_cpu = cpu_count()
     print("The feature index is constructing.")
     exp_dir = os.path.join(root_dir,spk_name)

@@ -28,7 +28,8 @@
     "num_workers": 2,
     "ema_decay": 0.999,
     "ema_interval": 100,
-    "d_lr_scale": 1.0
+    "d_lr_scale": 1.0,
+    "c_fm": 0.3
   },
   "data": {
     "training_files": "filelists/train.txt",
@@ -72,7 +73,10 @@
     "use_depthwise_conv":false,
     "flow_share_parameter": false,
     "use_automatic_f0_prediction": true,
-    "use_transformer_flow": false
+    "use_transformer_flow": false,
+    "use_unified_flow": false,
+    "hybrid_steps": 4,
+    "time_embed_dim": 128
   },
   "spk": {
     "nyaru": 0,

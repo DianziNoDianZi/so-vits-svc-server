@@ -17,6 +17,8 @@ server/err.log
 server/out.log
 server/server2.err.log
 server/server2.out.log
+local_err.log
+local_out.log
 server/uploads/
 configs/
 filelists/
