@@ -2235,12 +2235,19 @@ def _parse_training_log(active):
         elif info['stage'] == 'unzip':
             info['pct'] = 2
 
+    _cur_epoch = 1  # Train Epoch 行在 Losses 行之前打印，先缓存，供下一条 Losses 条目使用
     for line in log_content.split('\n') + (diff_extra or '').split('\n'):
+        mep = re.search(r'Train Epoch:\s*(\d+)', line)
+        if mep:
+            _cur_epoch = int(mep.group(1))
         m = re.search(r'Losses: \[([^\]]+)\]', line)
         if m:
             vals = [float(x.strip()) for x in m.group(1).split(',')]
             if len(vals) >= 2:
-                info['loss_data'].append({'g': round(vals[1], 4), 'd': round(vals[0], 4)})
+                entry = {'g': round(vals[1], 4), 'd': round(vals[0], 4), 'epoch': _cur_epoch}
+                if len(vals) >= 4:
+                    entry['mel'] = round(vals[3], 4)
+                info['loss_data'].append(entry)
         # 统一流 FM loss：train.py 在 Losses 行之后单独打印 FlowMatch Loss: 0.xxxxxx
         # 把 fm 值补到最后一条 loss_data 上，前端据此画第三条曲线
         mfm = re.search(r'FlowMatch Loss:\s*([\d.eE+-]+)', line)
@@ -2257,6 +2264,104 @@ def _parse_training_log(active):
     return info
 
 
+@app.route('/api/train/<int:tid>/loss_chart.json')
+@login_required
+def api_train_loss_chart(tid):
+    """下载训练任务的完整 loss 曲线数据（JSON），支持任意状态任务。"""
+    task = db.session.get(TrainingTask, tid)
+    if not task or task.user_id != current_user.id:
+        abort(404)
+    info = _parse_training_log(task)
+    payload = {
+        'task_id': tid,
+        'status': task.status,
+        'total_steps': task.total_steps or 0,
+        'loss_data': info.get('loss_data', []),
+        'eval_mel': info.get('eval_mel'),
+        'eval_step': info.get('eval_step', 0),
+    }
+    resp = jsonify(payload)
+    resp.headers['Content-Disposition'] = f'attachment; filename="task_{tid}_loss_chart.json"'
+    return resp
+
+
+@app.route('/api/train/<int:tid>/register_checkpoints', methods=['POST'])
+@login_required
+def api_train_register_checkpoints(tid):
+    """扫描任务链根目录下所有 G_*.pth checkpoint，注册为可直接推理的模型。
+
+    用硬链接（同盘符零拷贝）把 checkpoint 链接到 models/，配置复制到 configs/，
+    挂载该说话人的聚类索引；已在模型列表中的同名 checkpoint 自动跳过。
+    """
+    task = db.session.get(TrainingTask, tid)
+    if not task or task.user_id != current_user.id:
+        abort(404)
+    root_id = _chain_root_id(task)
+    td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{root_id}')
+    if not os.path.isdir(td):
+        return jsonify({'ok': False, 'msg': '任务目录不存在', 'registered': [], 'skipped': 0}), 404
+    # 收集所有 G_*.pth（跳过 G_0 底模）
+    ckpts = []
+    for f in sorted(os.listdir(td)):
+        if f.startswith('G_') and f.endswith('.pth') and f != 'G_0.pth':
+            n = int(''.join(c for c in f if c.isdigit()) or 0)
+            ckpts.append((f, n))
+    if not ckpts:
+        return jsonify({'ok': False, 'msg': '未找到任何 checkpoint（G_*.pth）', 'registered': [], 'skipped': 0})
+    models_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'models')
+    configs_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'configs')
+    os.makedirs(models_dir, exist_ok=True)
+    os.makedirs(configs_dir, exist_ok=True)
+    # 该说话人的聚类索引
+    cluster_name = None
+    _cand = f'{task.speaker}_cluster.pth'
+    if os.path.exists(os.path.join(models_dir, _cand)):
+        cluster_name = _cand
+    # 源 config.json
+    cfg_src = os.path.join(td, 'config.json')
+    registered = []
+    skipped = 0
+    for fname, step in ckpts:
+        cand_name = f'{task.speaker}-G{step}step-task{tid}'
+        if db.session.query(Model.id).filter_by(user_id=current_user.id, name=cand_name).first():
+            skipped += 1
+            continue
+        try:
+            # 硬链接到 models/（同盘符零拷贝；失败则复制）
+            model_name = f'{uuid.uuid4().hex[:8]}_{fname}'
+            dst_model = os.path.join(models_dir, model_name)
+            if os.path.exists(dst_model):
+                os.remove(dst_model)
+            try:
+                os.link(os.path.join(td, fname), dst_model)
+            except OSError:
+                shutil.copy2(os.path.join(td, fname), dst_model)
+            # 复制 config
+            cfg_name = None
+            if os.path.exists(cfg_src):
+                cfg_name = f'{uuid.uuid4().hex[:8]}_config_{fname.replace(".pth", ".json")}'
+                shutil.copy2(cfg_src, os.path.join(configs_dir, cfg_name))
+            m = Model(
+                user_id=current_user.id,
+                name=cand_name,
+                model_path=model_name,
+                config_path=cfg_name or '',
+                cluster_path=cluster_name,
+            )
+            db.session.add(m)
+            registered.append(cand_name)
+        except Exception:
+            # 单个 checkpoint 注册失败不影响其余
+            continue
+    db.session.commit()
+    return jsonify({
+        'ok': True,
+        'msg': f'已注册 {len(registered)} 个 checkpoint' + (f'，跳过 {skipped} 个已存在' if skipped else ''),
+        'registered': registered,
+        'skipped': skipped,
+    })
+
+
 @app.route('/api/train/<int:tid>/status')
 @login_required
 def api_train_status(tid):
@@ -2267,7 +2372,8 @@ def api_train_status(tid):
     if task.status == 'running':
         info = _parse_training_log(task)
     else:
-        info = {
+        # 已完成/失败任务也解析日志，前端可展示历史曲线并支持下载
+        info = _parse_training_log(task) if task.log_path and os.path.exists(task.log_path) else {
             'stage': '', 'pct': 100 if task.status == 'done' else 0,
             'current_step': 0, 'total_steps': task.total_steps or 0,
             'diff_epoch': 0, 'diff_total_epochs': 0,

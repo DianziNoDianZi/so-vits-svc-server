@@ -34,7 +34,14 @@ function loadQuickResume() {
     var archSel = document.getElementById('archSelect');
     if (archSel) { archSel.value = m.arch || 'sovits-v1'; toggleArch(archSel.value); }
     var flowSel = document.querySelector('select[name="flow_mode"]');
-    if (flowSel) flowSel.value = m.flow_mode || 'a2';
+    if (flowSel) {
+        flowSel.value = m.flow_mode || 'a2';
+        toggleFlowMode(flowSel.value);
+    }
+    var uniChk = document.getElementById('unifiedFlowChk');
+    if (uniChk) uniChk.checked = !!m.use_unified_flow;
+    toggleUnified(!!m.use_unified_flow);
+    setv('c_fm', m.c_fm !== undefined ? m.c_fm : 0.3);
     setv('speech_encoder', m.speech_encoder || 'vec768l12');
     setv('f0_predictor', m.f0_predictor || 'dio');
     var total = document.querySelector('input[name="total_steps"]');
@@ -114,39 +121,93 @@ function loadQuickResume() {
                 <small class="text-secondary" id="train-pct">{{ pct }}%</small>
 
                 <script>
-                /* loss 曲线：初始有数据直接建，后续 fetch 到数据时动态创建/更新 */
+                /* loss 曲线：双图表 —— 上图 G/D/FM，下图 Mel（独立 Y 轴） */
                 function ensureLossChart(ld) {
                     if (!ld || !ld.length) return;
-                    if (typeof Chart === 'undefined') return;  // Chart.js 未加载（CDN 失败等）
+                    if (typeof Chart === 'undefined') return;
                     var isDiff = ld[0].diff !== undefined && ld[0].g === undefined;
-                    if (window.lossChartInst) {
-                        // 架构切换（sovits <-> 扩散）时重建
-                        var sameMode = (window.lossChartMode === 'diff') === isDiff;
-                        if (sameMode) {
-                            var ch = window.lossChartInst;
-                            ch.data.labels = ld.map(function (_, i) { return i; });
-                            if (isDiff) {
-                                ch.data.datasets[0].data = ld.map(function (d) { return d.diff; });
-                            } else {
-                                ch.data.datasets[0].data = ld.map(function (d) { return d.g; });
-                                ch.data.datasets[1].data = ld.map(function (d) { return d.d; });
-                                // 统一流 FM loss：有 fm 字段时更新第三条曲线，无则置空
-                                if (ch.data.datasets[2]) {
-                                    ch.data.datasets[2].data = ld.map(function (d) { return d.fm !== undefined ? d.fm : null; });
-                                }
-                            }
-                            ch.update();
-                            return;
-                        }
+                    var labels = ld.map(function (d, i) { return d.epoch !== undefined ? 'E' + d.epoch : i; });
+                    var hasMel = ld.some(function (d) { return d.mel !== undefined; });
+                    var hasFm = ld.some(function (d) { return d.fm !== undefined; });
+
+                    // 架构切换时销毁旧图
+                    var sameMode = (window.lossChartMode === 'diff') === isDiff;
+                    if (window.lossChartInst && !sameMode) {
                         window.lossChartInst.destroy();
                         window.lossChartInst = null;
                     }
+                    if (window.melChartInst && !sameMode) {
+                        window.melChartInst.destroy();
+                        window.melChartInst = null;
+                    }
+
+                    // 增量更新：图表已存在且架构未变
+                    if (window.lossChartInst) {
+                        var ch = window.lossChartInst;
+                        ch.data.labels = labels;
+                        if (isDiff) {
+                            ch.data.datasets[0].data = ld.map(function (d) { return d.diff; });
+                        } else {
+                            ch.data.datasets[0].data = ld.map(function (d) { return d.g; });
+                            ch.data.datasets[1].data = ld.map(function (d) { return d.d; });
+                            // FM 线：之前没有但现在有了，动态添加
+                            var fmIdx = ch.data.datasets.findIndex(function (ds) { return ds.label === 'FM Loss'; });
+                            if (hasFm && fmIdx < 0) {
+                                ch.data.datasets.push({label: 'FM Loss', data: ld.map(function (d) { return d.fm !== undefined ? d.fm : null; }), borderColor: '#ffc107', borderWidth: 1, pointRadius: 0, fill: false});
+                            } else if (fmIdx >= 0) {
+                                ch.data.datasets[fmIdx].data = ld.map(function (d) { return d.fm !== undefined ? d.fm : null; });
+                            }
+                        }
+                        ch.update('none');
+
+                        // Mel 图：之前没有但现在有 mel 数据了，需要创建
+                        if (!isDiff && hasMel && !window.melChartInst) {
+                            var box = document.getElementById('lossChartBox');
+                            if (box && !document.getElementById('melChart')) {
+                                var melDiv = document.createElement('div');
+                                melDiv.innerHTML = '<div class="d-flex align-items-center mb-1"><small class="text-secondary me-2" style="font-size:0.7rem;">Mel Loss（重建质量，独立 Y 轴）</small><button id="melChartReset" type="button" class="btn btn-sm btn-outline-warning py-0" style="font-size:0.65rem;display:none;">重置缩放</button></div><canvas id="melChart" height="80"></canvas>';
+                                box.appendChild(melDiv);
+                            }
+                            var melCv = document.getElementById('melChart');
+                            if (melCv) {
+                                var _zoomOk = (typeof ChartZoom !== 'undefined');
+                                var _zoomCfg = _zoomOk ? {zoom: {pan: {enabled: true, mode: 'xy', threshold: 3}, zoom: {wheel: {enabled: true, speed: 0.1}, pinch: {enabled: true}, drag: {enabled: false}, mode: 'xy'}, limits: {x: {min: 'original', max: 'original'}, y: {min: 'original', max: 'original'}}}} : {};
+                                var _opts = { responsive: true, maintainAspectRatio: true, animation: false, events: ['click', 'mousedown', 'mouseup', 'wheel', 'touchstart', 'touchmove'], plugins: Object.assign({legend: {labels: {color: '#adb5bd', font: {size: 10}}}, tooltip: {enabled: false}}, _zoomCfg), scales: { x: {ticks: {color: '#6c757d', font: {size: 8}, maxTicksLimit: 12}, grid: {color: '#343a40'}}, y: {ticks: {color: '#6c757d', font: {size: 9}}, grid: {color: '#495057'}} } };
+                                window.melChartInst = new Chart(melCv.getContext('2d'), { type: 'line', data: {labels: labels, datasets: [{label: 'Mel Loss', data: ld.map(function (d) { return d.mel !== undefined ? d.mel : null; }), borderColor: '#6f42c1', borderWidth: 1, pointRadius: 0, fill: false}]}, options: _opts });
+                                // 绑定 reset
+                                var _btn = document.getElementById('melChartReset');
+                                if (_btn && _zoomOk) {
+                                    _btn.onclick = function () { window.melChartInst.resetZoom(); _btn.style.display = 'none'; };
+                                    melCv.addEventListener('mouseup', function () { setTimeout(function () { _btn.style.display = ''; }, 50); });
+                                    melCv.addEventListener('wheel', function () { setTimeout(function () { _btn.style.display = ''; }, 100); });
+                                }
+                            }
+                        }
+                        // Mel 图已存在，更新数据
+                        if (window.melChartInst && hasMel) {
+                            window.melChartInst.data.labels = labels;
+                            window.melChartInst.data.datasets[0].data = ld.map(function (d) { return d.mel !== undefined ? d.mel : null; });
+                            window.melChartInst.update('none');
+                        }
+                        return;
+                    }
+
+                    // 创建容器（双 canvas）
                     var box = document.getElementById('lossChartBox');
                     if (!box) {
                         box = document.createElement('div');
                         box.id = 'lossChartBox';
                         box.className = 'mt-2 mb-2';
-                        box.innerHTML = '<canvas id="lossChart" height="120"></canvas>';
+                        var html = '<div class="d-flex align-items-center mb-1 flex-wrap gap-1">'
+                            + '<span class="text-secondary me-2" style="font-size:0.8rem;">Loss 曲线</span>'
+                            + '<a id="lossChartDownload" class="btn btn-sm btn-outline-secondary py-0" style="font-size:0.7rem;" href="#">下载曲线数据</a>'
+                            + '<small class="text-secondary ms-auto" style="font-size:0.65rem;">滚轮缩放</small>'
+                            + '</div>'
+                            + '<div class="mb-2"><div class="d-flex align-items-center mb-1"><small class="text-secondary me-2" style="font-size:0.7rem;">G / D / FM（对抗与流匹配）</small><button id="lossChartReset" type="button" class="btn btn-sm btn-outline-warning py-0" style="font-size:0.65rem;display:none;">重置缩放</button></div><canvas id="lossChart" height="100"></canvas></div>';
+                        if (!isDiff && hasMel) {
+                            html += '<div><div class="d-flex align-items-center mb-1"><small class="text-secondary me-2" style="font-size:0.7rem;">Mel Loss（重建质量，独立 Y 轴）</small><button id="melChartReset" type="button" class="btn btn-sm btn-outline-warning py-0" style="font-size:0.65rem;display:none;">重置缩放</button></div><canvas id="melChart" height="80"></canvas></div>';
+                        }
+                        box.innerHTML = html;
                         var logPre = document.getElementById('train-log');
                         if (logPre && logPre.parentNode) {
                             logPre.parentNode.insertBefore(box, logPre);
@@ -156,39 +217,89 @@ function loadQuickResume() {
                             else document.body.appendChild(box);
                         }
                     }
-                    var canvas = document.getElementById('lossChart');
-                    if (!canvas) return;
-                    var datasets;
-                    if (isDiff) {
-                        datasets = [
-                            {label:'Diff Loss', data:ld.map(function(d){return d.diff;}), borderColor:'#7ee0c2', borderWidth:1, pointRadius:0, fill:false}
-                        ];
-                    } else {
-                        datasets = [
-                            {label:'G Loss', data:ld.map(function(d){return d.g;}), borderColor:'#0d6efd', borderWidth:1, pointRadius:0, fill:false},
-                            {label:'D Loss', data:ld.map(function(d){return d.d;}), borderColor:'#dc3545', borderWidth:1, pointRadius:0, fill:false}
-                        ];
-                        // 统一流 FM loss：仅当至少一条数据含 fm 字段时画第三条曲线
-                        if (ld.some(function (d) { return d.fm !== undefined; })) {
-                            datasets.push({label:'FM Loss', data:ld.map(function(d){return d.fm !== undefined ? d.fm : null;}), borderColor:'#ffc107', borderWidth:1, pointRadius:0, fill:false});
+                    var dl = document.getElementById('lossChartDownload');
+                    if (dl) dl.href = '/api/train/' + ({{ active.id|default(0) }}) + '/loss_chart.json';
+
+                    var zoomOk = (typeof ChartZoom !== 'undefined');
+                    function buildZoomCfg() {
+                        var cfg = {};
+                        if (zoomOk) {
+                            cfg.zoom = {
+                                pan: {enabled: true, mode: 'xy', threshold: 3},
+                                zoom: {wheel: {enabled: true, speed: 0.1}, pinch: {enabled: true}, drag: {enabled: false}, mode: 'xy'},
+                                limits: {x: {min: 'original', max: 'original'}, y: {min: 'original', max: 'original'}}
+                            };
                         }
+                        return cfg;
                     }
-                    window.lossChartInst = new Chart(canvas.getContext('2d'), {
-                        type: 'line',
-                        data: {
-                            labels: ld.map(function (_, i) { return i; }),
-                            datasets: datasets
-                        },
-                        options: {
-                            responsive: true,
-                            animation: false,
-                            plugins: {legend:{labels:{color:'#adb5bd',font:{size:10}}}},
-                            scales: {
-                                x:{display:false},
-                                y:{ticks:{color:'#6c757d',font:{size:9}}, grid:{color:'#495057'}}
+                    var commonOpts = {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        animation: false,
+                        events: ['click', 'mousedown', 'mouseup', 'wheel', 'touchstart', 'touchmove'],
+                        plugins: Object.assign({legend: {labels: {color: '#adb5bd', font: {size: 10}}}, tooltip: {enabled: false}}, buildZoomCfg()),
+                        scales: {
+                            x: {ticks: {color: '#6c757d', font: {size: 8}, maxTicksLimit: 12}, grid: {color: '#343a40'}},
+                            y: {ticks: {color: '#6c757d', font: {size: 9}}, grid: {color: '#495057'}}
+                        }
+                    };
+
+                    // 主图：G/D/FM
+                    var canvas = document.getElementById('lossChart');
+                    if (canvas) {
+                        var mainDatasets;
+                        if (isDiff) {
+                            mainDatasets = [{label: 'Diff Loss', data: ld.map(function (d) { return d.diff; }), borderColor: '#7ee0c2', borderWidth: 1, pointRadius: 0, fill: false}];
+                        } else {
+                            mainDatasets = [
+                                {label: 'G Loss', data: ld.map(function (d) { return d.g; }), borderColor: '#0d6efd', borderWidth: 1, pointRadius: 0, fill: false},
+                                {label: 'D Loss', data: ld.map(function (d) { return d.d; }), borderColor: '#dc3545', borderWidth: 1, pointRadius: 0, fill: false}
+                            ];
+                            if (hasFm) {
+                                mainDatasets.push({label: 'FM Loss', data: ld.map(function (d) { return d.fm !== undefined ? d.fm : null; }), borderColor: '#ffc107', borderWidth: 1, pointRadius: 0, fill: false});
                             }
                         }
-                    });
+                        window.lossChartInst = new Chart(canvas.getContext('2d'), {
+                            type: 'line',
+                            data: {labels: labels, datasets: mainDatasets},
+                            options: commonOpts
+                        });
+                    }
+
+                    // 副图：Mel（独立 Y 轴，量级差异大时不被 G/D 压扁）
+                    var melCanvas = document.getElementById('melChart');
+                    if (melCanvas && !isDiff && hasMel) {
+                        window.melChartInst = new Chart(melCanvas.getContext('2d'), {
+                            type: 'line',
+                            data: {labels: labels, datasets: [{label: 'Mel Loss', data: ld.map(function (d) { return d.mel !== undefined ? d.mel : null; }), borderColor: '#6f42c1', borderWidth: 1, pointRadius: 0, fill: false}]},
+                            options: commonOpts
+                        });
+                    }
+
+                    // 为每个图独立绑定重置按钮
+                    function bindReset(chartInst, canvasEl, btnId) {
+                        var btn = document.getElementById(btnId);
+                        if (!btn || !canvasEl || !chartInst) return;
+                        btn.onclick = function () {
+                            chartInst.resetZoom();
+                            btn.style.display = 'none';
+                        };
+                        canvasEl.addEventListener('mouseup', function () {
+                            setTimeout(function () {
+                                try {
+                                    var z = chartInst.getZoomLevel();
+                                    btn.style.display = (z && Math.abs(z - 1) > 0.001) ? '' : 'none';
+                                } catch (e) { btn.style.display = ''; }
+                            }, 50);
+                        });
+                        canvasEl.addEventListener('wheel', function () {
+                            setTimeout(function () { btn.style.display = ''; }, 100);
+                        });
+                    }
+                    if (zoomOk) {
+                        bindReset(window.lossChartInst, canvas, 'lossChartReset');
+                        bindReset(window.melChartInst, melCanvas, 'melChartReset');
+                    }
                     window.lossChartMode = isDiff ? 'diff' : 'sovits';
                 }
                 {% if loss_data and loss_data != '[]' %}
@@ -271,7 +382,7 @@ function loadQuickResume() {
                         <select name="resume_from" class="form-select bg-dark text-light border-secondary" id="resumeSelect" onchange="toggleResume()">
                             <option value="0">不续训，全新训练</option>
                             {% for t in history_resumable %}
-                            <option value="{{ t.id }}" data-step="{{ t.step }}" data-arch="{{ t.arch }}" data-flow-mode="{{ t.flow_mode }}">#{{ t.id }} {{ t.speaker }} ({{ t.model_type }}, checkpoint {{ t.step }}步)</option>
+                            <option value="{{ t.id }}" data-step="{{ t.step }}" data-arch="{{ t.arch }}" data-flow-mode="{{ t.flow_mode }}" data-unified="{{ '1' if t.use_unified_flow else '0' }}">#{{ t.id }} {{ t.speaker }} ({{ t.model_type }}, checkpoint {{ t.step }}步)</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -294,7 +405,14 @@ function loadQuickResume() {
                                 toggleArch(arch);
                             }
                             var flowSel = document.querySelector('select[name="flow_mode"]');
-                            if (flowSel) flowSel.value = flowMode;
+                            if (flowSel) {
+                                flowSel.value = flowMode;
+                                toggleFlowMode(flowMode);
+                            }
+                            var unified = opt ? opt.getAttribute('data-unified') === '1' : false;
+                            var uniChk = document.getElementById('unifiedFlowChk');
+                            if (uniChk) uniChk.checked = unified;
+                            toggleUnified(unified);
                             var total = document.querySelector('input[name="total_steps"]');
                             var totalLabel = document.getElementById('totalStepsLabel');
                             if (totalLabel) {
@@ -356,6 +474,23 @@ function loadQuickResume() {
                             var sel = document.getElementById('archSelect');
                             if (sel) toggleArch(sel.value);
                         });
+                        // 统一流开关：勾选后才显示 c_fm 输入
+                        function toggleUnified(on) {
+                            var row = document.getElementById('cFmRow');
+                            if (row) row.style.display = on ? '' : 'none';
+                        }
+                        // flow_mode 切换：A1 不支持 unified_flow（无 enc_q 提供 FM 目标）
+                        function toggleFlowMode(mode) {
+                            var uniChk = document.getElementById('unifiedFlowChk');
+                            if (!uniChk) return;
+                            if (mode === 'a1') {
+                                uniChk.checked = false;
+                                uniChk.disabled = true;
+                                toggleUnified(false);
+                            } else {
+                                uniChk.disabled = false;
+                            }
+                        }
                     </script>
                     <div class="mb-3">
                         <label class="form-label">参数预设</label>
@@ -393,15 +528,15 @@ function loadQuickResume() {
                     <div class="row mb-2">
                         <div class="col-4">
                             <input type="number" name="total_steps" class="form-control bg-dark text-light border-secondary" value="4200" min="1" max="200000" placeholder="训练步数" oninput="this.dataset.manual='1'">
-                            <small class="text-secondary" id="totalStepsLabel">总步数</small>
+                            <small class="text-secondary" id="totalStepsLabel">总步数 · 小数据4k-8k，大数据10k-20k；过多过拟合</small>
                         </div>
                         <div class="col-4">
                             <input type="number" name="batch_size" class="form-control bg-dark text-light border-secondary" value="4" min="1" max="16" placeholder="batch_size">
-                            <small class="text-secondary">batch_size</small>
+                            <small class="text-secondary">batch_size · 显存大可调6-8，小则2-4；越大越稳但越慢</small>
                         </div>
                         <div class="col-4">
                             <input type="number" name="keep_ckpts" class="form-control bg-dark text-light border-secondary" value="3" min="1" max="20" placeholder="keep_ckpts">
-                            <small class="text-secondary">保留检查点</small>
+                            <small class="text-secondary">保留检查点数 · 建议5-8，便于过拟合时回退</small>
                         </div>
                     </div>
                     <div class="mb-2">
@@ -409,9 +544,11 @@ function loadQuickResume() {
                     </div>
                     <div class="collapse" id="advParams">
                         <div class="card card-body bg-dark border-secondary p-2 mb-3">
+                            <!-- 编码器与 F0 -->
+                            <div class="text-info mb-1" style="font-size:11px;">编码器与 F0</div>
                             <div class="row mb-2">
                                 <div class="col-6">
-                                    <label class="text-secondary" style="font-size:12px;">编码器</label>
+                                    <label class="text-secondary" style="font-size:12px;">语音编码器</label>
                                     <select name="speech_encoder" class="form-select form-select-sm bg-dark text-light border-secondary">
                                         <option value="vec768l12">ContentVec (768dim) [推荐]</option>
                                         <option value="vec256l9">ContentVec (256dim)</option>
@@ -422,6 +559,7 @@ function loadQuickResume() {
                                         <option value="dphubert">DP-HuBERT</option>
                                         <option value="wavlmbase+">WavLM Base+</option>
                                     </select>
+                                    <small class="text-secondary">提取语音特征；ContentVec 768 音质最好</small>
                                 </div>
                                 <div class="col-6">
                                     <label class="text-secondary" style="font-size:12px;">F0 预测器</label>
@@ -430,53 +568,162 @@ function loadQuickResume() {
                                         <option value="pm">pm [推荐]</option>
                                         <option value="harvest">harvest [最准但慢]</option>
                                     </select>
+                                    <small class="text-secondary">基频提取；pm 速度精度平衡，harvest 最准</small>
+                                </div>
+                            </div>
+                            <!-- 学习率与调度 -->
+                            <div class="text-info mb-1 mt-2" style="font-size:11px;">学习率与调度</div>
+                            <div class="row mb-2">
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">学习率 (lr)</label>
+                                    <input type="number" name="learning_rate" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.0001" step="1e-7" min="1e-6" max="1e-2">
+                                    <small class="text-secondary">0.0001 标准；过大训练崩，过小收敛慢</small>
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">lr_decay</label>
+                                    <input type="number" name="lr_decay" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.999875" step="1e-6">
+                                    <small class="text-secondary">每步衰减率；0.999875≈8k步降37%</small>
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">warmup_epochs</label>
+                                    <input type="number" name="warmup_epochs" class="form-control form-control-sm bg-dark text-light border-secondary" value="0" min="0" max="100">
+                                    <small class="text-secondary">前 N 轮 lr 从0线性升到目标；0=不warmup</small>
                                 </div>
                             </div>
                             <div class="row mb-2">
-                                <div class="col-6">
-                                    <label class="text-secondary" style="font-size:12px;">学习率 (lr)</label>
-                                    <input type="number" name="learning_rate" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.0001" step="1e-7" min="1e-6" max="1e-2">
-                                </div>
                                 <div class="col-6">
                                     <label class="text-secondary" style="font-size:12px;">segment_size</label>
                                     <input type="number" name="segment_size" class="form-control form-control-sm bg-dark text-light border-secondary" value="10240" min="2048" max="65536" step="256">
-                                    <small class="text-secondary">调低省内存</small>
+                                    <small class="text-secondary">训练切片长度(采样点)；显存不足调到4096/2048，音质略降</small>
+                                </div>
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">seed (随机种子)</label>
+                                    <input type="number" name="seed" class="form-control form-control-sm bg-dark text-light border-secondary" value="1234" min="0">
+                                    <small class="text-secondary">相同种子可复现结果；改种子换初始化</small>
                                 </div>
                             </div>
+                            <!-- Loss 权重 -->
+                            <div class="text-info mb-1 mt-2" style="font-size:11px;">Loss 权重</div>
                             <div class="row mb-2">
-                                <div class="col-6">
-                                    <label class="text-secondary" style="font-size:12px;">自动停止步数 (0=不限制)</label>
-                                    <input type="number" name="auto_stop" class="form-control form-control-sm bg-dark text-light border-secondary" value="200" min="0" max="5000">
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">c_mel (mel loss 权重)</label>
+                                    <input type="number" name="c_mel" class="form-control form-control-sm bg-dark text-light border-secondary" value="45" step="1" min="1" max="200">
+                                    <small class="text-secondary">45 默认；提到60重建更严(吐字更清)但训练更难</small>
                                 </div>
-                                <div class="col-6">
-                                    <label class="text-secondary" style="font-size:12px;">lr_decay</label>
-                                    <input type="number" name="lr_decay" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.999875" step="1e-6">
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">c_kl (KL loss 权重)</label>
+                                    <input type="number" name="c_kl" class="form-control form-control-sm bg-dark text-light border-secondary" value="1.0" step="0.1" min="0" max="10">
+                                    <small class="text-secondary">1.0 默认；过大压缩后验空间，过小生成发散</small>
                                 </div>
-                            </div>
-                            <div class="row mb-2">
-                                <div class="col-6">
-                                    <label class="text-secondary" style="font-size:12px;">log_interval (步)</label>
-                                    <input type="number" name="log_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="200">
-                                </div>
-                                <div class="col-6">
-                                    <label class="text-secondary" style="font-size:12px;">eval_interval (步)</label>
-                                    <input type="number" name="eval_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="800">
-                                </div>
-                            </div>
-                            <div class="row mb-2">
-                                <div class="col-6">
-                                    <label class="text-secondary" style="font-size:12px;">判别器 lr 缩放 (0~1)</label>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">d_lr_scale (判别器lr缩放)</label>
                                     <input type="number" name="d_lr_scale" class="form-control form-control-sm bg-dark text-light border-secondary" value="1.0" step="0.05" min="0.05" max="1">
-                                    <small class="text-secondary">RVC 架构建议 0.5，前 1000 步压低判别器</small>
+                                    <small class="text-secondary">1.0=平等；0.3-0.5 压判别器防碾压(RVC建议0.5)</small>
                                 </div>
                             </div>
+                            <!-- EMA -->
+                            <div class="text-info mb-1 mt-2" style="font-size:11px;">EMA（指数移动平均）</div>
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">ema_decay</label>
+                                    <input type="number" name="ema_decay" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.999" step="0.001" min="0.9" max="0.9999">
+                                    <small class="text-secondary">0.999 标准；越大越平滑但收敛慢</small>
+                                </div>
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">ema_interval (步)</label>
+                                    <input type="number" name="ema_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="100" min="1" max="10000">
+                                    <small class="text-secondary">每 N 步更新一次 EMA；越大更新越懒</small>
+                                </div>
+                            </div>
+                            <!-- 训练控制 -->
+                            <div class="text-info mb-1 mt-2" style="font-size:11px;">训练控制</div>
+                            <div class="row mb-2">
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">auto_stop (0=不限)</label>
+                                    <input type="number" name="auto_stop" class="form-control form-control-sm bg-dark text-light border-secondary" value="200" min="0" max="5000">
+                                    <small class="text-secondary">连续 N 步 loss 不降自动停；200 防无效训练</small>
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">log_interval (步)</label>
+                                    <input type="number" name="log_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="200" min="1">
+                                    <small class="text-secondary">每 N 步打印 loss；影响日志详细度</small>
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">eval_interval (步)</label>
+                                    <input type="number" name="eval_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="800" min="1">
+                                    <small class="text-secondary">每 N 步在验证集评估；影响过拟合判断</small>
+                                </div>
+                            </div>
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">max_speclen (最大频谱帧)</label>
+                                    <input type="number" name="max_speclen" class="form-control form-control-sm bg-dark text-light border-secondary" value="512" min="64" max="2048">
+                                    <small class="text-secondary">512 默认；调小省显存但长句被截断</small>
+                                </div>
+                            </div>
+                            <!-- 数据与精度 -->
+                            <div class="text-info mb-1 mt-2" style="font-size:11px;">数据与精度</div>
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">fp16 半精度训练</label>
+                                    <select name="fp16_run" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                        <option value="auto">auto [按GPU自动]</option>
+                                        <option value="1">开启 (省显存加速)</option>
+                                        <option value="0">关闭 (CPU/老GPU)</option>
+                                    </select>
+                                    <small class="text-secondary">auto=GPU显存≥6G自动开；CPU训练选关闭</small>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check" style="font-size:12px; margin-top:1.5rem;">
+                                        <input class="form-check-input" type="checkbox" name="vol_aug" id="volAugChk">
+                                        <label class="form-check-label text-secondary" for="volAugChk">
+                                            vol_aug 音量数据增强
+                                        </label>
+                                    </div>
+                                    <small class="text-secondary">开启增强对音量变化的鲁棒性，训练略慢</small>
+                                </div>
+                            </div>
+                            <!-- 模型结构 -->
+                            <div class="text-info mb-1 mt-2" style="font-size:11px;">模型结构（高级，一般无需修改）</div>
+                            <div class="row mb-2">
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">n_layers_q (后验编码器层数)</label>
+                                    <input type="number" name="n_layers_q" class="form-control form-control-sm bg-dark text-light border-secondary" value="3" min="1" max="12">
+                                    <small class="text-secondary">3 默认；越大表达越强但易过拟合</small>
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">enc_q_hidden (A2后验隐藏维度)</label>
+                                    <input type="number" name="enc_q_hidden" class="form-control form-control-sm bg-dark text-light border-secondary" value="96" min="32" max="256">
+                                    <small class="text-secondary">96 默认(仅rvc-flow)；越大后验越强但易过拟合</small>
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">hybrid_steps (混合推理FM步数)</label>
+                                    <input type="number" name="hybrid_steps" class="form-control form-control-sm bg-dark text-light border-secondary" value="4" min="1" max="20">
+                                    <small class="text-secondary">4 默认(仅统一流)；越大越精细但越慢</small>
+                                </div>
+                            </div>
+                            <!-- RVC-Flow 模式 -->
                             <div class="row mb-2" id="flowModeRow" style="display:none;">
                                 <div class="col-6">
                                     <label class="text-secondary" style="font-size:12px;">RVC-Flow 模式</label>
-                                    <select name="flow_mode" class="form-select form-select-sm bg-dark text-light border-secondary">
-                                        <option value="a2">A2 后验流 [推荐]</option>
-                                        <option value="a1">A1 特征先验流 [对比]</option>
+                                    <select name="flow_mode" class="form-select form-select-sm bg-dark text-light border-secondary" onchange="toggleFlowMode(this.value)">
+                                        <option value="a2">A2 后验流</option>
+                                        <option value="a1">A1 特征先验流 [推荐]</option>
                                     </select>
+                                    <small class="text-secondary" id="flowModeHint">A2=后验编码器(spec→z_q)，A1=特征直连flow编码(解耦音色与吐字)</small>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check" style="font-size:12px;">
+                                        <input class="form-check-input" type="checkbox" id="unifiedFlowChk" name="use_unified_flow" onchange="toggleUnified(this.checked)">
+                                        <label class="form-check-label text-secondary" for="unifiedFlowChk">
+                                            开启统一流（NF+FM 共享骨干）
+                                        </label>
+                                    </div>
+                                    <div id="cFmRow" style="display:none; margin-top:4px;">
+                                        <label class="text-secondary" style="font-size:12px;">c_fm（FM loss 权重）</label>
+                                        <input type="number" step="0.1" min="0" max="2" name="c_fm" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.5">
+                                        <small class="text-secondary">0.5 经验最佳；0.1 时 FM 几乎无梯度</small>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -490,70 +737,79 @@ function loadQuickResume() {
                                 <div class="col-4">
                                     <label class="text-secondary" style="font-size:12px;">batch_size</label>
                                     <input type="number" name="diff_batch_size" class="form-control form-control-sm bg-dark text-light border-secondary" value="8" min="1" max="48">
+                                    <small class="text-secondary">每次迭代样本数；显存大可调大</small>
                                 </div>
                                 <div class="col-4">
                                     <label class="text-secondary" style="font-size:12px;">epochs</label>
                                     <input type="number" name="diff_epochs" class="form-control form-control-sm bg-dark text-light border-secondary" value="100000" min="1">
+                                    <small class="text-secondary">最大训练轮数；通常由目标步数限制</small>
                                 </div>
                                 <div class="col-4">
                                     <label class="text-secondary" style="font-size:12px;">timesteps</label>
                                     <input type="number" name="diff_timesteps" class="form-control form-control-sm bg-dark text-light border-secondary" value="1000" min="100" max="10000">
+                                    <small class="text-secondary">扩散步数；1000 标准，越大越精细但越慢</small>
                                 </div>
                             </div>
                             <div class="row mb-2">
-                                <div class="col-4">
+                                <div class="col-6">
                                     <label class="text-secondary" style="font-size:12px;">目标步数（0=不限）</label>
                                     <input type="number" name="diff_max_steps" class="form-control form-control-sm bg-dark text-light border-secondary" value="0" min="0" max="10000000" step="100">
                                     <small class="text-secondary">到步数自动停止保存，防过拟合；0 则靠手动停止</small>
                                 </div>
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">k_step_max (0=推理时定)</label>
+                                    <input type="number" name="diff_kstep" class="form-control form-control-sm bg-dark text-light border-secondary" value="0" min="0" max="10000">
+                                    <small class="text-secondary">训练时最大扩散步数；0=用 timesteps</small>
+                                </div>
                             </div>
                             <div class="row mb-2">
                                 <div class="col-4">
-                                    <label class="text-secondary" style="font-size:12px;">k_step_max</label>
-                                    <input type="number" name="diff_kstep" class="form-control form-control-sm bg-dark text-light border-secondary" value="0" min="0" max="10000">
-                                </div>
-                                <div class="col-4">
                                     <label class="text-secondary" style="font-size:12px;">n_layers</label>
                                     <input type="number" name="diff_layers" class="form-control form-control-sm bg-dark text-light border-secondary" value="20" min="4" max="40">
+                                    <small class="text-secondary">扩散网络层数；20 标准，越大越强但越慢</small>
                                 </div>
                                 <div class="col-4">
                                     <label class="text-secondary" style="font-size:12px;">n_chans</label>
                                     <input type="number" name="diff_chans" class="form-control form-control-sm bg-dark text-light border-secondary" value="256" min="64" max="1024">
+                                    <small class="text-secondary">扩散通道数；256 标准，越大容量越大</small>
+                                </div>
+                                <div class="col-4">
+                                    <label class="text-secondary" style="font-size:12px;">n_hidden</label>
+                                    <input type="number" name="diff_hidden" class="form-control form-control-sm bg-dark text-light border-secondary" value="128" min="32" max="512">
+                                    <small class="text-secondary">隐藏层维度；128 标准</small>
                                 </div>
                             </div>
                             <div class="row mb-2">
                                 <div class="col-4">
-                                    <label class="text-secondary" style="font-size:12px;">n_hidden</label>
-                                    <input type="number" name="diff_hidden" class="form-control form-control-sm bg-dark text-light border-secondary" value="128" min="32" max="512">
-                                </div>
-                                <div class="col-4">
-                                    <label class="text-secondary" style="font-size:12px;">lr</label>
+                                    <label class="text-secondary" style="font-size:12px;">lr (学习率)</label>
                                     <input type="number" name="diff_lr" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.0001" step="1e-7">
+                                    <small class="text-secondary">0.0001 标准；过大训练不稳定</small>
                                 </div>
                                 <div class="col-4">
-                                    <label class="text-secondary" style="font-size:12px;">amp_dtype</label>
+                                    <label class="text-secondary" style="font-size:12px;">amp_dtype (精度)</label>
                                     <select name="diff_amp" class="form-select form-select-sm bg-dark text-light border-secondary">
                                         <option value="fp32">fp32</option>
                                         <option value="fp16">fp16</option>
                                         <option value="bf16">bf16</option>
                                     </select>
+                                    <small class="text-secondary">混合精度类型；fp16 省显存，bf16 更稳</small>
                                 </div>
-                            </div>
-                            <div class="row mb-2">
-                                <div class="col-4">
-                                    <label class="text-secondary" style="font-size:12px;">decay_step</label>
-                                    <input type="number" name="diff_decay_step" class="form-control form-control-sm bg-dark text-light border-secondary" value="100000">
-                                </div>
-                                <div class="col-4">
-                                    <label class="text-secondary" style="font-size:12px;">gamma</label>
-                                    <input type="number" name="diff_gamma" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.5" step="0.1">
-                                </div>
-                            </div>
-                            <div class="row mb-2">
                                 <div class="col-4">
                                     <label class="text-secondary" style="font-size:12px;">保存间隔（步）</label>
                                     <input type="number" name="diff_interval_val" class="form-control form-control-sm bg-dark text-light border-secondary" value="200" min="10" max="10000" step="10">
                                     <small class="text-secondary">每 N 步保存一次 checkpoint</small>
+                                </div>
+                            </div>
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">decay_step</label>
+                                    <input type="number" name="diff_decay_step" class="form-control form-control-sm bg-dark text-light border-secondary" value="100000">
+                                    <small class="text-secondary">学习率衰减步数；到该步 lr 按 gamma 衰减</small>
+                                </div>
+                                <div class="col-6">
+                                    <label class="text-secondary" style="font-size:12px;">gamma (衰减率)</label>
+                                    <input type="number" name="diff_gamma" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.5" step="0.1">
+                                    <small class="text-secondary">lr 衰减因子；0.5=到 decay_step 时 lr 减半</small>
                                 </div>
                             </div>
                         </div>
@@ -587,6 +843,8 @@ function loadQuickResume() {
                         <a href="{{ url_for('train_result', tid=t.id, diff=1) }}" class="text-info">扩散模型</a>
                         <a href="{{ url_for('train_result', tid=t.id, diff=1, config=1) }}" class="text-secondary">扩散配置</a>
                         {% endif %}
+                        <a href="/api/train/{{ t.id }}/loss_chart.json" class="text-warning" title="下载 loss 曲线数据">曲线</a>
+                        <a href="javascript:void(0)" class="text-info" title="把所有 checkpoint 注册为可推理模型" onclick="registerCkpts({{ t.id }}, this)">注册全部</a>
                     </td>
                     <td>{{ t.created_at.strftime('%m-%d %H:%M') }}</td>
                 </tr>
@@ -597,4 +855,37 @@ function loadQuickResume() {
         </table>
     </div>
 </div>
+
+<script>
+/* 注册某训练任务的所有 checkpoint 为可推理模型（硬链接，零拷贝） */
+function registerCkpts(tid, el) {
+    if (!confirm('把任务 #' + tid + ' 的所有 checkpoint 注册到模型列表？（已存在的会跳过）')) return;
+    var orig = el.textContent;
+    el.textContent = '注册中…';
+    el.style.pointerEvents = 'none';
+    // POST 需带 CSRF token（用 FormData 从 session 取）
+    var fd = new FormData();
+    fd.append('_csrf_token', '{{ csrf_token() }}');
+    fetch('/api/train/' + tid + '/register_checkpoints', {
+        method: 'POST',
+        body: fd,
+        headers: {'X-Requested-With': 'fetch'}
+    }).then(function (r) {
+        if (!r.ok) {
+            return r.text().then(function (t) {
+                throw new Error('HTTP ' + r.status + (t ? (': ' + t.slice(0, 200)) : ''));
+            });
+        }
+        return r.json();
+    }).then(function (d) {
+        el.textContent = orig;
+        el.style.pointerEvents = '';
+        alert(d.msg || (d.ok ? '注册完成' : '注册失败'));
+    }).catch(function (err) {
+        el.textContent = orig;
+        el.style.pointerEvents = '';
+        alert('请求失败：' + (err && err.message ? err.message : '网络错误，请刷新页面后重试'));
+    });
+}
+</script>
 {% endblock %}
