@@ -38,3 +38,9 @@ docs/demo/*.ogg
 !docs/demo/original.mp3
 !docs/demo/converted.mp3
 !docs/demo/accompaniment.mp3
+
+# 临时脚本和实验文件（A1 开发期产物，不入仓库）
+_register_a1*.py
+_test_a1_infer.py
+experiments/
+plan_direction.md
