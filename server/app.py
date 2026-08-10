@@ -2316,12 +2316,14 @@ def train_page():
                 _srcp = json.loads(t.params_json or '{}') or {}
                 _arch = _srcp.get('arch', 'sovits-v1')
                 _flow_mode = _srcp.get('flow_mode', 'a2')
+                _unified = _srcp.get('use_unified_flow', False)
             except Exception:
                 _arch = 'sovits-v1'
                 _flow_mode = 'a2'
+                _unified = False
             history_resumable.append({
                 'id': t.id, 'speaker': t.speaker, 'model_type': t.model_type, 'step': latest_step,
-                'arch': _arch, 'flow_mode': _flow_mode,
+                'arch': _arch, 'flow_mode': _flow_mode, 'use_unified_flow': _unified,
             })
     # 快速恢复快照（停止后一键继续上次训练）
     qr_meta = None
@@ -2463,6 +2465,20 @@ def train_submit():
         'arch': request.form.get('arch', 'sovits-v1'),
         'd_lr_scale': _flt('d_lr_scale', 1.0),
         'flow_mode': request.form.get('flow_mode', 'a2'),
+        'use_unified_flow': request.form.get('use_unified_flow') == 'on',
+        'c_fm': _flt('c_fm', 0.3),
+        'c_mel': _flt('c_mel', 45),
+        'c_kl': _flt('c_kl', 1.0),
+        'ema_decay': _flt('ema_decay', 0.999),
+        'ema_interval': _int('ema_interval', 100),
+        'max_speclen': _int('max_speclen', 512),
+        'fp16_run': None if request.form.get('fp16_run', 'auto') == 'auto' else (request.form.get('fp16_run') == '1'),
+        'vol_aug': request.form.get('vol_aug') == 'on',
+        'warmup_epochs': _int('warmup_epochs', 0),
+        'seed': _int('seed', 1234),
+        'n_layers_q': _int('n_layers_q', 3),
+        'hybrid_steps': _int('hybrid_steps', 4),
+        'enc_q_hidden': _int('enc_q_hidden', 96),
         'speech_encoder': request.form.get('speech_encoder', 'vec768l12'),
         'f0_predictor': request.form.get('f0_predictor', 'dio'),
         'learning_rate': _flt('learning_rate', 0.0001),
@@ -2498,6 +2514,10 @@ def train_submit():
             params['d_lr_scale'] = src_params.get('d_lr_scale', 1.0)
         if not request.form.get('flow_mode'):
             params['flow_mode'] = src_params.get('flow_mode', 'a2')
+        if not request.form.get('use_unified_flow'):
+            params['use_unified_flow'] = src_params.get('use_unified_flow', False)
+        if not request.form.get('c_fm'):
+            params['c_fm'] = src_params.get('c_fm', 0.3)
 
     mt = request.form.get('model_type', 'sovits')
     total_steps = _int('total_steps', 4200)

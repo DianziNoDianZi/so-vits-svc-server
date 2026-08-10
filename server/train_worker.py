@@ -109,6 +109,7 @@ def build_retrieval_index(speaker_dir, speaker, out_dir):
 
 def write_quick_resume(task_id, speaker, dataset_zip, model_type, batch_size, total_steps,
                        keep_ckpts, speech_encoder, f0_predictor, arch, flow_mode,
+                       use_unified_flow, c_fm,
                        resume_from_id, checkpoint_path, config_path):
     """把最新 checkpoint + 配置打成"快速恢复"快照（只保留最近 1 份，模型少）。
     停止后训练页/任务列表一键继续上次训练。"""
@@ -134,6 +135,8 @@ def write_quick_resume(task_id, speaker, dataset_zip, model_type, batch_size, to
             'f0_predictor': f0_predictor,
             'arch': arch,
             'flow_mode': flow_mode,
+            'use_unified_flow': use_unified_flow,
+            'c_fm': c_fm,
             'resume_from_id': resume_from_id or task_id,
             'checkpoint_step': int(''.join(c for c in os.path.basename(checkpoint_path) if c.isdigit()) or 0),
         }
@@ -176,6 +179,10 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
         speech_encoder='vec768l12', f0_predictor='dio', learning_rate=0.0001, segment_size=10240,
         lr_decay=0.999875, auto_stop=200, log_interval=200, eval_interval=800,
         arch='sovits-v1', d_lr_scale=1.0, flow_mode='a2',
+        use_unified_flow=False, c_fm=0.3,
+        c_mel=45, c_kl=1.0, ema_decay=0.999, ema_interval=100,
+        max_speclen=512, fp16_run=None, vol_aug=False, warmup_epochs=0, seed=1234,
+        n_layers_q=3, hybrid_steps=4, enc_q_hidden=96,
         diff_batch_size=48, diff_epochs=100000, diff_timesteps=1000, diff_kstep=0,
         diff_layers=20, diff_chans=512, diff_hidden=256, diff_lr=0.0001,
         diff_decay_step=100000, diff_gamma=0.5, diff_amp='fp32',
@@ -424,12 +431,29 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
             cfg['train']['num_workers'] = 4 if _ram_gb >= 16 else (2 if _ram_gb >= 8 else 0)
             cfg['train']['max_steps'] = total_steps
             cfg['train']['auto_stop'] = auto_stop
+            cfg['train']['seed'] = int(seed)
+            # Loss 权重
+            cfg['train']['c_mel'] = float(c_mel)
+            cfg['train']['c_kl'] = float(c_kl)
+            # EMA
+            cfg['train']['ema_decay'] = float(ema_decay)
+            cfg['train']['ema_interval'] = int(ema_interval)
+            # 频谱与数据增强
+            cfg['train']['max_speclen'] = int(max_speclen)
+            cfg['train']['vol_aug'] = bool(vol_aug)
+            cfg['train']['warmup_epochs'] = int(warmup_epochs)
             cfg['model']['arch'] = arch
+            cfg['model']['n_layers_q'] = int(n_layers_q)
             if arch == 'rvc-flow':
                 cfg['model']['flow_mode'] = flow_mode
                 cfg['model']['n_flow_layer'] = 2
                 cfg['model']['n_layers_trans_flow'] = 2
-                cfg['model']['enc_q_hidden'] = 96
+                cfg['model']['enc_q_hidden'] = int(enc_q_hidden)
+                cfg['model']['hybrid_steps'] = int(hybrid_steps)
+                # 统一流：同一骨干承载 NF+FM，开启后推理可选 nf/hybrid/fm
+                cfg['model']['use_unified_flow'] = bool(use_unified_flow)
+                if use_unified_flow:
+                    cfg['train']['c_fm'] = float(c_fm)
             cfg['train']['d_lr_scale'] = d_lr_scale
             try:
                 import torch as _torch
@@ -437,7 +461,11 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 _gpu_mem = _torch.cuda.get_device_properties(0).total_memory if _has_gpu else 0
             except Exception:
                 _has_gpu, _gpu_mem = False, 0
-            cfg['train']['fp16_run'] = bool(_has_gpu and _gpu_mem >= 6 * 1024 ** 3)
+            # fp16_run：用户显式传 True/False 则尊重，None 则按 GPU 自动判断
+            if fp16_run is None:
+                cfg['train']['fp16_run'] = bool(_has_gpu and _gpu_mem >= 6 * 1024 ** 3)
+            else:
+                cfg['train']['fp16_run'] = bool(fp16_run)
             log(f'fp16_run={cfg["train"]["fp16_run"]}, max_steps={total_steps}, auto_stop={auto_stop}')
 
             # 使用预训练底模（仅当任务目录中没有已有 checkpoint 时）
@@ -511,6 +539,7 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                     if write_quick_resume(
                             task_id, speaker, dataset_zip, model_type, batch_size, total_steps,
                             keep_ckpts, speech_encoder, f0_predictor, arch, flow_mode,
+                            use_unified_flow, c_fm,
                             resume_from_id, os.path.join(data_dir, model_name), config_path):
                         log(f'快速恢复快照已更新（{os.path.basename(model_name)}）')
                 except Exception as e:
