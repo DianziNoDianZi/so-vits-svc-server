@@ -109,8 +109,13 @@ def build_retrieval_index(speaker_dir, speaker, out_dir):
 
 def write_quick_resume(task_id, speaker, dataset_zip, model_type, batch_size, total_steps,
                        keep_ckpts, speech_encoder, f0_predictor, arch, flow_mode,
-                       use_unified_flow, c_fm,
-                       resume_from_id, checkpoint_path, config_path):
+                       use_unified_flow, c_fm, c_kl=1.0, c_mel=45,
+                       ema_decay=0.999, ema_interval=100, max_speclen=512, seed=1234,
+                       n_layers_q=3, hybrid_steps=4, enc_q_hidden=96, d_lr_scale=1.0,
+                       vol_aug=False, warmup_epochs=0, fp16_run=None,
+                       learning_rate=0.0001, segment_size=10240, lr_decay=0.999875,
+                       auto_stop=200, log_interval=200, eval_interval=800,
+                       resume_from_id=None, checkpoint_path=None, config_path=None):
     """把最新 checkpoint + 配置打成"快速恢复"快照（只保留最近 1 份，模型少）。
     停止后训练页/任务列表一键继续上次训练。"""
     try:
@@ -137,6 +142,25 @@ def write_quick_resume(task_id, speaker, dataset_zip, model_type, batch_size, to
             'flow_mode': flow_mode,
             'use_unified_flow': use_unified_flow,
             'c_fm': c_fm,
+            'c_kl': c_kl,
+            'c_mel': c_mel,
+            'ema_decay': ema_decay,
+            'ema_interval': ema_interval,
+            'max_speclen': max_speclen,
+            'seed': seed,
+            'n_layers_q': n_layers_q,
+            'hybrid_steps': hybrid_steps,
+            'enc_q_hidden': enc_q_hidden,
+            'd_lr_scale': d_lr_scale,
+            'vol_aug': vol_aug,
+            'warmup_epochs': warmup_epochs,
+            'fp16_run': fp16_run,
+            'learning_rate': learning_rate,
+            'segment_size': segment_size,
+            'lr_decay': lr_decay,
+            'auto_stop': auto_stop,
+            'log_interval': log_interval,
+            'eval_interval': eval_interval,
             'resume_from_id': resume_from_id or task_id,
             'checkpoint_step': int(''.join(c for c in os.path.basename(checkpoint_path) if c.isdigit()) or 0),
         }
@@ -264,6 +288,10 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
 
     try:
         log(f'开始训练: {speaker} ({model_type})')
+        # A1（特征先验流）无 enc_q 提供 FM 目标，unified_flow 强制关闭（与 models.py 保护一致），
+        # 避免 config.json / 快照 meta 中残留 use_unified_flow=True 污染后续续训
+        if flow_mode == 'a1':
+            use_unified_flow = False
         model_name = ''
         diff_name = ''
         saved_model = ''
@@ -341,9 +369,10 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 _exec(['preprocess_flist_config.py', '--source_dir', dataset_dir, '--speech_encoder', speech_encoder])
             else:
                 log(f'续训: filelists 已存在，跳过生成配置')
-            config_path = os.path.join(PROJECT_DIR, 'configs', 'config.json')
-            # 复用上一次训练实际使用的配置（train.py 会在任务目录保存 config.json 副本）
-            saved_cfg = os.path.join(data_dir, 'config.json')
+            config_path = os.path.join(data_dir, 'config.json')
+            # 续训以「任务目录独立 config.json」为权威（train.py 保存的副本），
+            # 避免所有任务共享全局 configs/config.json 导致架构参数串扰
+            saved_cfg = config_path
             if os.path.exists(saved_cfg):
                 with open(saved_cfg, 'r', encoding='utf-8') as f:
                     old_cfg = json.load(f)
@@ -357,7 +386,10 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 old_cfg['model']['arch'] = arch
                 with open(config_path, 'w', encoding='utf-8') as f:
                     json.dump(old_cfg, f, indent=2, ensure_ascii=False)
-                log(f'续训: 复用上次训练配置 {saved_cfg}')
+                log(f'续训: 复用任务独立配置 {saved_cfg}')
+            else:
+                # 任务目录无配置副本（极端情况），退回全局配置
+                config_path = os.path.join(PROJECT_DIR, 'configs', 'config.json')
             if feat_ok:
                 log(f'续训: 特征齐全（soft {soft_count}/{len(wav_files)}，f0 {f0_count}/{len(wav_files)}，spec {spec_count}/{len(wav_files)}），跳过特征提取')
             else:
@@ -539,7 +571,12 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                     if write_quick_resume(
                             task_id, speaker, dataset_zip, model_type, batch_size, total_steps,
                             keep_ckpts, speech_encoder, f0_predictor, arch, flow_mode,
-                            use_unified_flow, c_fm,
+                            use_unified_flow, c_fm, c_kl, c_mel,
+                            ema_decay, ema_interval, max_speclen, seed,
+                            n_layers_q, hybrid_steps, enc_q_hidden, d_lr_scale,
+                            vol_aug, warmup_epochs, fp16_run,
+                            learning_rate, segment_size, lr_decay, auto_stop,
+                            log_interval, eval_interval,
                             resume_from_id, os.path.join(data_dir, model_name), config_path):
                         log(f'快速恢复快照已更新（{os.path.basename(model_name)}）')
                 except Exception as e:

@@ -33,14 +33,14 @@ function loadQuickResume() {
     setv('model_type', m.model_type || 'sovits');
     var archSel = document.getElementById('archSelect');
     if (archSel) { archSel.value = m.arch || 'sovits-v1'; toggleArch(archSel.value); }
-    var flowSel = document.querySelector('select[name="flow_mode"]');
-    if (flowSel) {
-        flowSel.value = m.flow_mode || 'a2';
-        toggleFlowMode(flowSel.value);
-    }
     var uniChk = document.getElementById('unifiedFlowChk');
     if (uniChk) uniChk.checked = !!m.use_unified_flow;
     toggleUnified(!!m.use_unified_flow);
+    var flowSel = document.querySelector('select[name="flow_mode"]');
+    if (flowSel) {
+        flowSel.value = m.flow_mode || 'a2';
+        toggleFlowMode(flowSel.value);   // A1 时最后执行：统一禁用 unified 并隐藏 c_fm
+    }
     setv('c_fm', m.c_fm !== undefined ? m.c_fm : 0.3);
     setv('speech_encoder', m.speech_encoder || 'vec768l12');
     setv('f0_predictor', m.f0_predictor || 'dio');
@@ -53,6 +53,28 @@ function loadQuickResume() {
     setv('keep_ckpts', m.keep_ckpts || 3);
     var dscale = document.querySelector('input[name="d_lr_scale"]');
     if (dscale) { dscale.value = (m.arch === 'rvc' || m.arch === 'rvc-flow') ? 0.5 : 1.0; dscale.dataset.manual = '1'; }
+    // 完整透传训练参数（与 write_quick_resume 快照一一对应）
+    setv('c_kl', m.c_kl !== undefined ? m.c_kl : 1.0);
+    setv('c_mel', m.c_mel !== undefined ? m.c_mel : 45);
+    setv('ema_decay', m.ema_decay !== undefined ? m.ema_decay : 0.999);
+    setv('ema_interval', m.ema_interval !== undefined ? m.ema_interval : 100);
+    setv('max_speclen', m.max_speclen !== undefined ? m.max_speclen : 512);
+    setv('seed', m.seed !== undefined ? m.seed : 1234);
+    setv('n_layers_q', m.n_layers_q !== undefined ? m.n_layers_q : 3);
+    setv('hybrid_steps', m.hybrid_steps !== undefined ? m.hybrid_steps : 4);
+    setv('enc_q_hidden', m.enc_q_hidden !== undefined ? m.enc_q_hidden : 96);
+    setv('learning_rate', m.learning_rate !== undefined ? m.learning_rate : 0.0001);
+    setv('segment_size', m.segment_size !== undefined ? m.segment_size : 10240);
+    setv('lr_decay', m.lr_decay !== undefined ? m.lr_decay : 0.999875);
+    setv('auto_stop', m.auto_stop !== undefined ? m.auto_stop : 200);
+    setv('log_interval', m.log_interval !== undefined ? m.log_interval : 200);
+    setv('eval_interval', m.eval_interval !== undefined ? m.eval_interval : 800);
+    setv('warmup_epochs', m.warmup_epochs !== undefined ? m.warmup_epochs : 0);
+    var volChk = document.querySelector('input[name="vol_aug"]');
+    if (volChk) volChk.checked = !!m.vol_aug;
+    var fp16 = document.querySelector('select[name="fp16_run"]');
+    if (fp16) fp16.value = (m.fp16_run === true || m.fp16_run === 1 || m.fp16_run === '1') ? '1'
+        : (m.fp16_run === false || m.fp16_run === 0 || m.fp16_run === '0') ? '0' : 'auto';
     setv('quick_resume_chain', m.resume_from_id || m.task_id || 0);
     setv('quick_dataset_zip', m.dataset_zip || '');
     var stepsEl = document.getElementById('totalStepsLabel');
@@ -404,15 +426,15 @@ function loadQuickResume() {
                                 archSel.value = arch;
                                 toggleArch(arch);
                             }
-                            var flowSel = document.querySelector('select[name="flow_mode"]');
-                            if (flowSel) {
-                                flowSel.value = flowMode;
-                                toggleFlowMode(flowMode);
-                            }
                             var unified = opt ? opt.getAttribute('data-unified') === '1' : false;
                             var uniChk = document.getElementById('unifiedFlowChk');
                             if (uniChk) uniChk.checked = unified;
                             toggleUnified(unified);
+                            var flowSel = document.querySelector('select[name="flow_mode"]');
+                            if (flowSel) {
+                                flowSel.value = flowMode;
+                                toggleFlowMode(flowMode);   // A1 时最后统一禁用 unified 并隐藏 c_fm
+                            }
                             var total = document.querySelector('input[name="total_steps"]');
                             var totalLabel = document.getElementById('totalStepsLabel');
                             if (totalLabel) {

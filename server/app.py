@@ -2445,15 +2445,23 @@ def train_page():
                 if f.startswith('G_') and f.endswith('.pth'):
                     latest_step = max(latest_step, int(''.join(c for c in f if c.isdigit()) or 0))
         if latest_step > 0:
+            # 架构参数权威来源：任务目录的独立 config.json（params_json 可能缺字段）
+            _arch, _flow_mode, _unified = 'sovits-v1', 'a2', False
+            _cfg_path = os.path.join(td, 'config.json')
             try:
-                _srcp = json.loads(t.params_json or '{}') or {}
-                _arch = _srcp.get('arch', 'sovits-v1')
-                _flow_mode = _srcp.get('flow_mode', 'a2')
-                _unified = _srcp.get('use_unified_flow', False)
+                if os.path.exists(_cfg_path):
+                    with open(_cfg_path, 'r', encoding='utf-8') as f:
+                        _cfg = json.load(f)
+                    _arch = (_cfg.get('model', {}) or {}).get('arch', _arch)
+                    _flow_mode = (_cfg.get('model', {}) or {}).get('flow_mode', _flow_mode)
+                    _unified = (_cfg.get('model', {}) or {}).get('use_unified_flow', _unified)
+                else:
+                    _srcp = json.loads(t.params_json or '{}') or {}
+                    _arch = _srcp.get('arch', _arch)
+                    _flow_mode = _srcp.get('flow_mode', _flow_mode)
+                    _unified = _srcp.get('use_unified_flow', _unified)
             except Exception:
-                _arch = 'sovits-v1'
-                _flow_mode = 'a2'
-                _unified = False
+                pass
             history_resumable.append({
                 'id': t.id, 'speaker': t.speaker, 'model_type': t.model_type, 'step': latest_step,
                 'arch': _arch, 'flow_mode': _flow_mode, 'use_unified_flow': _unified,
@@ -2503,10 +2511,31 @@ def train_quick_resume():
     os.makedirs(log_dir, exist_ok=True)
     params = {
         'arch': meta.get('arch', 'sovits-v1'),
-        'd_lr_scale': 0.5 if meta.get('arch') in ('rvc', 'rvc-flow') else 1.0,
+        'd_lr_scale': meta.get('d_lr_scale', 0.5 if meta.get('arch') in ('rvc', 'rvc-flow') else 1.0),
         'flow_mode': meta.get('flow_mode', 'a2'),
         'speech_encoder': meta.get('speech_encoder', 'vec768l12'),
         'f0_predictor': meta.get('f0_predictor', 'dio'),
+        # 完整透传训练参数（与 write_quick_resume 快照一一对应）
+        'use_unified_flow': meta.get('use_unified_flow', False),
+        'c_fm': meta.get('c_fm', 0.3),
+        'c_kl': meta.get('c_kl', 1.0),
+        'c_mel': meta.get('c_mel', 45),
+        'ema_decay': meta.get('ema_decay', 0.999),
+        'ema_interval': meta.get('ema_interval', 100),
+        'max_speclen': meta.get('max_speclen', 512),
+        'seed': meta.get('seed', 1234),
+        'n_layers_q': meta.get('n_layers_q', 3),
+        'hybrid_steps': meta.get('hybrid_steps', 4),
+        'enc_q_hidden': meta.get('enc_q_hidden', 96),
+        'vol_aug': meta.get('vol_aug', False),
+        'warmup_epochs': meta.get('warmup_epochs', 0),
+        'fp16_run': meta.get('fp16_run'),
+        'learning_rate': meta.get('learning_rate', 0.0001),
+        'segment_size': meta.get('segment_size', 10240),
+        'lr_decay': meta.get('lr_decay', 0.999875),
+        'auto_stop': meta.get('auto_stop', 200),
+        'log_interval': meta.get('log_interval', 200),
+        'eval_interval': meta.get('eval_interval', 800),
     }
     task = TrainingTask(
         user_id=current_user.id,
@@ -2635,22 +2664,46 @@ def train_submit():
         'diff_max_steps': _int('diff_max_steps', 0),
     }
 
-    # 续训时继承原任务的模型架构（避免续训链上架构被表单默认值覆盖）
-    if resume_from:
-        try:
-            src_params = json.loads(src.params_json or '{}')
-        except Exception:
-            src_params = {}
-        if not request.form.get('arch'):
-            params['arch'] = src_params.get('arch', 'sovits-v1')
-        if not request.form.get('d_lr_scale'):
-            params['d_lr_scale'] = src_params.get('d_lr_scale', 1.0)
-        if not request.form.get('flow_mode'):
-            params['flow_mode'] = src_params.get('flow_mode', 'a2')
-        if not request.form.get('use_unified_flow'):
-            params['use_unified_flow'] = src_params.get('use_unified_flow', False)
-        if not request.form.get('c_fm'):
-            params['c_fm'] = src_params.get('c_fm', 0.3)
+    # 续训时继承原任务的架构与训练参数（权威来源：源任务目录的独立 config.json，
+    # 而非表单默认值——select 总有值导致 if not request.form.get() 永不触发）
+    if resume_from or quick_chain:
+        src_cfg_path = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data',
+                                    f'task_{chain_id}', 'config.json')
+        if os.path.exists(src_cfg_path):
+            try:
+                with open(src_cfg_path, 'r', encoding='utf-8') as f:
+                    _scfg = json.load(f)
+                _sm = _scfg.get('model', {}) or {}
+                _st = _scfg.get('train', {}) or {}
+                params['arch'] = _sm.get('arch', params.get('arch', 'sovits-v1'))
+                params['d_lr_scale'] = _st.get('d_lr_scale', params.get('d_lr_scale', 1.0))
+                params['flow_mode'] = _sm.get('flow_mode', params.get('flow_mode', 'a2'))
+                params['use_unified_flow'] = _sm.get('use_unified_flow', False)
+                params['c_fm'] = _st.get('c_fm', params.get('c_fm', 0.3))
+                params['c_kl'] = _st.get('c_kl', params.get('c_kl', 1.0))
+                params['c_mel'] = _st.get('c_mel', params.get('c_mel', 45))
+                params['ema_decay'] = _st.get('ema_decay', params.get('ema_decay', 0.999))
+                params['ema_interval'] = _st.get('ema_interval', params.get('ema_interval', 100))
+                params['max_speclen'] = _st.get('max_speclen', params.get('max_speclen', 512))
+                params['seed'] = _st.get('seed', params.get('seed', 1234))
+                params['n_layers_q'] = _sm.get('n_layers_q', params.get('n_layers_q', 3))
+                params['hybrid_steps'] = _sm.get('hybrid_steps', params.get('hybrid_steps', 4))
+                params['enc_q_hidden'] = _sm.get('enc_q_hidden', params.get('enc_q_hidden', 96))
+                params['vol_aug'] = _st.get('vol_aug', params.get('vol_aug', False))
+                params['warmup_epochs'] = _st.get('warmup_epochs', params.get('warmup_epochs', 0))
+                if 'fp16_run' in _st:
+                    params['fp16_run'] = _st['fp16_run']
+                params['learning_rate'] = _st.get('learning_rate', params.get('learning_rate', 0.0001))
+                params['segment_size'] = _st.get('segment_size', params.get('segment_size', 10240))
+                params['lr_decay'] = _st.get('lr_decay', params.get('lr_decay', 0.999875))
+                params['auto_stop'] = _st.get('auto_stop', params.get('auto_stop', 200))
+                params['log_interval'] = _st.get('log_interval', params.get('log_interval', 200))
+                params['eval_interval'] = _st.get('eval_interval', params.get('eval_interval', 800))
+            except Exception:
+                pass
+        # A1（特征先验流）无 enc_q 提供 FM 目标，unified_flow 强制关闭（与 models.py/worker 一致）
+        if params.get('flow_mode') == 'a1':
+            params['use_unified_flow'] = False
 
     mt = request.form.get('model_type', 'sovits')
     total_steps = _int('total_steps', 4200)
