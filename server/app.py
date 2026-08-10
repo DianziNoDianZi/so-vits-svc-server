@@ -1454,9 +1454,36 @@ def inference():
             c_params = json.loads(c.params_json or '{}')
         except Exception:
             c_params = {}
+        # 读取模型 config 详情（arch / flow_mode / use_unified_flow / 训练参数）
+        m_info = {'arch': '', 'flow_mode': '', 'use_unified_flow': False,
+                  'step': '', 'c_mel': '', 'c_kl': '', 'c_fm': '', 'd_lr_scale': ''}
+        if c.model.config_path:
+            cfg_p = os.path.join(app.config['UPLOAD_FOLDER'], 'configs', c.model.config_path)
+            if os.path.exists(cfg_p):
+                try:
+                    with open(cfg_p, 'r', encoding='utf-8') as f:
+                        _cfg = json.load(f)
+                    _m = _cfg.get('model') or {}
+                    _t = _cfg.get('train') or {}
+                    m_info['arch'] = _m.get('arch', '') or 'sovits-v1'
+                    m_info['flow_mode'] = _m.get('flow_mode', '') or ('a2' if _m.get('use_unified_flow') else '')
+                    m_info['use_unified_flow'] = bool(_m.get('use_unified_flow'))
+                    m_info['c_mel'] = _t.get('c_mel', '')
+                    m_info['c_kl'] = _t.get('c_kl', '')
+                    m_info['c_fm'] = _t.get('c_fm', '')
+                    m_info['d_lr_scale'] = _t.get('d_lr_scale', '')
+                except Exception:
+                    pass
+        # 从模型名解析 step 数（如 Aris-统一流-A1-G6000 → 6000）
+        import re as _re
+        _step_match = _re.search(r'G(\d+)step|G(\d+)', c.model.name)
+        if _step_match:
+            m_info['step'] = _step_match.group(1) or _step_match.group(2)
         config_items.append({'id': c.id, 'name': c.name, 'model': c.model.name,
+                             'model_id': c.model.id,
                              'params': c_params,
-                             'has_cluster': bool(c.model.cluster_path)})
+                             'has_cluster': bool(c.model.cluster_path),
+                             'model_info': m_info})
     return render_template('inference.html', configs=config_items, recent=recent_items)
 
 
@@ -2924,6 +2951,113 @@ def train_task_delete(tid):
     db.session.commit()
     flash('训练任务已删除', 'success')
     return redirect(url_for('task_list'))
+
+
+@app.route('/api/model/<int:model_id>/losses')
+@login_required
+def api_model_losses(model_id):
+    """返回模型对应训练任务的 loss 曲线数据。
+    通过比较模型 config 与 logs/task_*/config.json 找到匹配的训练任务，
+    解析 train.log 返回 loss 数据（含 step / g / d / fm / mel / kl / eval）。
+    """
+    m = Model.query.get_or_404(model_id)
+    if m.user_id != current_user.id:
+        abort(403)
+
+    # 读模型 config 关键字段
+    model_cfg = None
+    if m.config_path:
+        cfg_p = os.path.join(app.config['UPLOAD_FOLDER'], 'configs', m.config_path)
+        if os.path.exists(cfg_p):
+            try:
+                with open(cfg_p, 'r', encoding='utf-8') as f:
+                    model_cfg = json.load(f)
+            except Exception:
+                model_cfg = None
+
+    # 扫描 logs/task_*/ 找 config 匹配的训练任务
+    logs_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
+    matched_log = None
+    matched_task = None
+    if os.path.isdir(logs_root):
+        for task_name in os.listdir(logs_root):
+            task_dir = os.path.join(logs_root, task_name)
+            if not os.path.isdir(task_dir):
+                continue
+            task_cfg_path = os.path.join(task_dir, 'config.json')
+            task_log_path = os.path.join(task_dir, 'train.log')
+            if not os.path.exists(task_cfg_path) or not os.path.exists(task_log_path):
+                continue
+            try:
+                with open(task_cfg_path, 'r', encoding='utf-8') as f:
+                    task_cfg = json.load(f)
+            except Exception:
+                continue
+            # 比较关键字段：flow_mode / arch / c_kl / c_mel / c_fm / d_lr_scale
+            if not model_cfg:
+                continue
+            _mm = model_cfg.get('model') or {}
+            _tm = task_cfg.get('model') or {}
+            _mt = model_cfg.get('train') or {}
+            _tt = task_cfg.get('train') or {}
+            keys = ['flow_mode', 'use_unified_flow', 'arch']
+            train_keys = ['c_kl', 'c_mel', 'c_fm', 'd_lr_scale', 'max_steps']
+            if all(_mm.get(k) == _tm.get(k) for k in keys) and \
+               all(str(_mt.get(k)) == str(_tt.get(k)) for k in train_keys):
+                matched_log = task_log_path
+                matched_task = task_name
+                break
+
+    if not matched_log or not os.path.exists(matched_log):
+        return jsonify({'ok': False, 'msg': '未找到匹配的训练日志', 'losses': [], 'evals': []})
+
+    # 解析 train.log
+    losses = []
+    evals = []
+    cur_epoch = 1
+    try:
+        with open(matched_log, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                mep = re.search(r'Train Epoch:\s*(\d+)', line)
+                if mep:
+                    cur_epoch = int(mep.group(1))
+                # Losses: [d, g, fm, mel, kl], step: N
+                mloss = re.search(r'Losses: \[([^\]]+)\].*step: (\d+)', line)
+                if mloss:
+                    vals = [float(x.strip()) for x in mloss.group(1).split(',')]
+                    step = int(mloss.group(2))
+                    entry = {
+                        'step': step,
+                        'epoch': cur_epoch,
+                        'd': round(vals[0], 4) if len(vals) > 0 else None,
+                        'g': round(vals[1], 4) if len(vals) > 1 else None,
+                        'fm': round(vals[2], 4) if len(vals) > 2 else None,
+                        'mel': round(vals[3], 4) if len(vals) > 3 else None,
+                        'kl': round(vals[4], 4) if len(vals) > 4 else None,
+                    }
+                    losses.append(entry)
+                # Eval Losses: [x.xxxx], step: N
+                meval = re.search(r'Eval Losses: \[([^\]]+)\], step: (\d+)', line)
+                if meval:
+                    evals.append({
+                        'step': int(meval.group(2)),
+                        'mel': round(float(meval.group(1)), 4),
+                    })
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': f'解析日志失败: {e}', 'losses': [], 'evals': []})
+
+    # 从模型名解析 step
+    step_match = re.search(r'G(\d+)', m.name or '')
+    cur_step = int(step_match.group(1)) if step_match else 0
+
+    return jsonify({
+        'ok': True,
+        'task': matched_task,
+        'current_step': cur_step,
+        'losses': losses,
+        'evals': evals,
+        'count': len(losses),
+    })
 
 
 # ========== 启动 ==========

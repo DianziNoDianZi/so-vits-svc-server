@@ -49,8 +49,15 @@
         {% block content %}{% endblock %}
     </div>
 
-    <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
-    <script src="{{ url_for('static', filename='bootstrap.bundle.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='chart.umd.min.js') }}?v=2"></script>
+    <script src="{{ url_for('static', filename='chartjs-plugin-zoom.min.js') }}?v=1"></script>
+    <script>
+        // 注册 zoom 插件到 Chart.js（UMD 加载后需显式注册）
+        if (typeof Chart !== 'undefined' && typeof ChartZoom !== 'undefined') {
+            try { Chart.register(ChartZoom); } catch (e) { console.warn('zoom plugin register failed:', e); }
+        }
+    </script>
+    <script src="{{ url_for('static', filename='bootstrap.bundle.min.js') }}?v=2"></script>
 
     <footer class="text-center text-secondary small border-top border-secondary mt-5 py-3">
         <div class="mb-1">

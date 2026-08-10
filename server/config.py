@@ -38,6 +38,7 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
     MAX_CONTENT_LENGTH = 4 * 1024 * 1024 * 1024  # 4GB max upload（whisper large ~3GB）
+    TEMPLATES_AUTO_RELOAD = True  # 模板文件修改后自动重载，无需重启服务
     # SQLite 连接等待锁超时（秒），缓解多线程写库的 "database is locked"
     SQLALCHEMY_ENGINE_OPTIONS = {
         'connect_args': {'timeout': 30},
