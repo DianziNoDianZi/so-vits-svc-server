@@ -956,7 +956,8 @@ class SynthesizerTrnRvcFlow(nn.Module):
             self.dec = Generator(h=hps)
 
         # 轻量 TransformerFlow（affine coupling + FFT）
-        if use_unified_flow:
+        # A1 模式无 enc_q，无法为 FM 提供目标，强制走 TransformerCouplingBlock
+        if use_unified_flow and flow_mode == 'a2':
             # 方案3：用 GeneralizedFlow 替换 TransformerCouplingBlock
             # gin_channels 与现有 flow 一致（speaker embedding 通道）
             self.flow = GeneralizedFlow(
@@ -966,6 +967,9 @@ class SynthesizerTrnRvcFlow(nn.Module):
                 gin_channels=gin_channels
             )
         else:
+            if use_unified_flow and flow_mode != 'a2':
+                print(f'[!] {flow_mode} 模式不支持 unified_flow（A1 无 enc_q 提供 FM 目标），自动使用 TransformerCouplingBlock')
+                self.use_unified_flow = False
             self.flow = TransformerCouplingBlock(
                 inter_channels, hidden_channels, filter_channels, n_heads,
                 n_layers_trans_flow, 5, p_dropout, n_flow_layer,
@@ -977,8 +981,10 @@ class SynthesizerTrnRvcFlow(nn.Module):
                 gin_channels=gin_channels)
             self.prior_proj = nn.Conv1d(inter_channels, inter_channels * 2, 1)
         else:
+            # A1（特征先验流）：无 enc_q，固定先验 N(0,1)
+            # KL = -0.5 + 0.5*||z_p||^2 约束 flow(x) 输出方差≈1，防止漂移
+            # 不用学习先验：flow 和 prior_proj 都看 x 会串谋使 KL→-∞
             self.enc_q = None
-            self.prior_proj = None
 
     def EnableCharacterMix(self, n_speakers_map, device):
         self.speaker_map = torch.zeros((n_speakers_map, 1, 1, self.gin_channels)).to(device)
@@ -1030,13 +1036,21 @@ class SynthesizerTrnRvcFlow(nn.Module):
 
             return o, ids_slice, spec_mask, (z_q, z_p, m_p, logs_p, m_q, logs_q), 0, 0, 0, loss_flow_match
         else:
-            # A1：flow 正向编码特征，KL 约束到标准正态先验
+            # A1（特征先验流）：flow 正向编码 c → z_p，dec(z_p)
+            # 训练与推理路径一致（都走 flow 正向），无 enc_q，无先验采样
+            # 固定先验 N(0,1)：m_p=0, logs_p=0，KL = -0.5 + 0.5*||z_p||^2
+            # 约束 flow 输出方差≈1，防止 z_p 漂移；不串谋（先验不依赖 x）
             z_p = self.flow(x, x_mask, g=g)
+            m_p = torch.zeros_like(z_p)
+            logs_p = torch.zeros_like(z_p)
+            # A1 无 enc_q：logs_q=0（固定后验方差），m_q=None
+            logs_q = torch.zeros_like(z_p)
             x_slice, pitch_slice, ids_slice = commons.rand_slice_segments_with_pitch(
                 z_p, f0, c_lengths, self.segment_size)
             o = self.dec(x_slice, g=g, f0=pitch_slice)
-            zeros = torch.zeros_like(z_p)
-            return o, ids_slice, x_mask, (z_p, z_p, zeros, zeros, None, zeros), 0, 0, 0, loss_flow_match
+            # 返回元组：(z, z_p, m_p, logs_p, m_q, logs_q)
+            # A1 中 z = z_p（flow 输出即为 decoder 输入）
+            return o, ids_slice, x_mask, (z_p, z_p, m_p, logs_p, None, logs_q), 0, 0, 0, loss_flow_match
 
     @torch.no_grad()
     def infer(self, c, f0, uv, g=None, noice_scale=0.35, seed=52468, predict_f0=False, vol=None):
@@ -1096,6 +1110,12 @@ class SynthesizerTrnRvcFlow(nn.Module):
         Returns:
             o: 音频 [B, 1, T]
         """
+        if self.flow_mode != 'a2':
+            raise RuntimeError(
+                f"infer_hybrid 仅支持 A2 模式（后验流），当前 flow_mode={self.flow_mode}。"
+                "A1 模式（特征先验流）无 enc_q 提供 FM 目标，不支持 Hybrid 推理，"
+                "请使用 infer() 进行纯 NF 推理。")
+
         if c.device == torch.device("cuda"):
             torch.cuda.manual_seed_all(seed)
         else:

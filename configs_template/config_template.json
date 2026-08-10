@@ -74,6 +74,8 @@
     "flow_share_parameter": false,
     "use_automatic_f0_prediction": true,
     "use_transformer_flow": false,
+    "flow_mode": "a2",
+    "enc_q_hidden": 96,
     "use_unified_flow": false,
     "hybrid_steps": 4,
     "time_embed_dim": 128
