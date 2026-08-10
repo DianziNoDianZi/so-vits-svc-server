@@ -82,6 +82,7 @@ function loadQuickResume() {
     var label = document.querySelector('label[for="datasetInput"]');
     if (label) label.textContent = '数据集 (zip)（已载入续训，不传则继续原数据）';
     document.getElementById('quickResumeCard')?.scrollIntoView({behavior: 'smooth'});
+    updateArchGuard();
 }
 {% endif %}
 </script>
@@ -386,10 +387,13 @@ function loadQuickResume() {
             <div class="card-body">
                 <h4 class="card-title text-light">提交训练任务</h4>
                 <p class="text-secondary">上传zip格式的数据集（内为直接可用的音频文件）</p>
-                <form action="{{ url_for('train_submit') }}" method="POST" enctype="multipart/form-data" onsubmit="return confirm('确定提交训练任务？提交后将进入队列');">
+                <form action="{{ url_for('train_submit') }}" method="POST" enctype="multipart/form-data" onsubmit="return validateTrainForm();">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="quick_resume_chain" value="0">
                     <input type="hidden" name="quick_dataset_zip" value="">
+                    <div class="mb-2" id="archGuardWrap" style="display:none;">
+                        <div id="archGuard" class="alert alert-info py-2 mb-0"></div>
+                    </div>
                     <div class="mb-3">
                         <label class="form-label">说话人名称</label>
                         <input type="text" name="speaker" class="form-control bg-dark text-light border-secondary" required placeholder="my_speaker">
@@ -454,6 +458,7 @@ function loadQuickResume() {
                             var totalLabel2 = document.getElementById('totalStepsLabel');
                             if (totalLabel2) totalLabel2.textContent = '总步数';
                         }
+                        updateArchGuard();
                     }
                     </script>
                     <div class="mb-3">
@@ -491,6 +496,7 @@ function loadQuickResume() {
                                 if (dscale && !dscale.dataset.manual) dscale.value = '1.0';
                                 if (frow) frow.style.display = 'none';
                             }
+                            updateArchGuard();
                         }
                         document.addEventListener('DOMContentLoaded', function () {
                             var sel = document.getElementById('archSelect');
@@ -500,6 +506,7 @@ function loadQuickResume() {
                         function toggleUnified(on) {
                             var row = document.getElementById('cFmRow');
                             if (row) row.style.display = on ? '' : 'none';
+                            updateArchGuard();
                         }
                         // flow_mode 切换：A1 不支持 unified_flow（无 enc_q 提供 FM 目标）
                         function toggleFlowMode(mode) {
@@ -512,6 +519,77 @@ function loadQuickResume() {
                             } else {
                                 uniChk.disabled = false;
                             }
+                            updateArchGuard();
+                        }
+                        // ---- 防呆：实时显示将按什么架构训练 ----
+                        function currentArchDesc() {
+                            var arch = document.getElementById('archSelect');
+                            var flow = document.querySelector('select[name="flow_mode"]');
+                            var uni = document.getElementById('unifiedFlowChk');
+                            var a = arch ? arch.value : 'sovits-v1';
+                            var fm = flow ? flow.value : 'a2';
+                            var u = !!(uni && uni.checked);
+                            if (a === 'rvc-flow') {
+                                return {
+                                    text: (fm === 'a1' ? 'A1 特征先验流' : 'A2 后验流') + (u ? ' + 统一流' : ''),
+                                    ckl: fm === 'a1' ? '0.1' : '1.0'
+                                };
+                            }
+                            if (a === 'rvc') return {text: 'RVC 轻量架构', ckl: null};
+                            return {text: 'SoVITS v1', ckl: null};
+                        }
+                        // 读取续训源（"续训自"下拉 或 快速恢复快照）的架构
+                        function srcArchInfo() {
+                            var sel = document.getElementById('resumeSelect');
+                            if (sel && sel.value && sel.value != '0') {
+                                var opt = sel.options[sel.selectedIndex];
+                                return {flow: opt.getAttribute('data-flow-mode'), uni: opt.getAttribute('data-unified') === '1'};
+                            }
+                            if (typeof quickResumeMeta !== 'undefined' && quickResumeMeta && document.querySelector('input[name="quick_resume_chain"]') &&
+                                document.querySelector('input[name="quick_resume_chain"]').value != '0') {
+                                return {flow: quickResumeMeta.flow_mode, uni: !!quickResumeMeta.use_unified_flow};
+                            }
+                            return null;
+                        }
+                        function updateArchGuard() {
+                            var wrap = document.getElementById('archGuardWrap');
+                            var el = document.getElementById('archGuard');
+                            if (!wrap || !el) return;
+                            var d = currentArchDesc();
+                            var src = srcArchInfo();
+                            var flow = document.querySelector('select[name="flow_mode"]');
+                            var curFlow = flow ? flow.value : 'a2';
+                            if (src && src.flow) {
+                                var srcLabel = (src.flow === 'a1' ? 'A1 特征先验流' : 'A2 后验流') + (src.uni && src.flow !== 'a1' ? ' + 统一流' : '');
+                                var same = src.flow === curFlow;
+                                wrap.style.display = '';
+                                el.className = 'alert py-2 mb-0 ' + (same ? 'alert-info' : 'alert-warning');
+                                el.innerHTML = (same ? '' : '⚠ ') + '续训将沿用源任务配置：<b>' + srcLabel + '</b>' +
+                                    (same ? '（你当前表单与其一致）' : '（你当前表单选择与源不一致，提交后以后端 config 为准）');
+                                return;
+                            }
+                            var m = '将按 <b>' + d.text + '</b>' + (d.ckl ? ' · c_kl=' + d.ckl : '') + ' 训练';
+                            wrap.style.display = '';
+                            el.className = 'alert alert-info py-2 mb-0';
+                            el.innerHTML = m;
+                        }
+                        // ---- 防呆：提交前校验 ----
+                        function validateTrainForm() {
+                            var flow = document.querySelector('select[name="flow_mode"]');
+                            var uni = document.getElementById('unifiedFlowChk');
+                            if (flow && flow.value === 'a1' && uni && uni.checked) {
+                                alert('A1 特征先验流不支持统一流（无 enc_q 提供 FM 目标），已强制关闭统一流');
+                                return false;
+                            }
+                            var sel = document.getElementById('resumeSelect');
+                            var isResume = (sel && sel.value && sel.value != '0') ||
+                                (typeof quickResumeMeta !== 'undefined' && document.querySelector('input[name="quick_resume_chain"]') &&
+                                 document.querySelector('input[name="quick_resume_chain"]').value != '0');
+                            var d = currentArchDesc();
+                            var msg = '确定提交训练任务？\n将按：' + d.text + (d.ckl ? '（c_kl=' + d.ckl + '）' : '');
+                            if (isResume) msg += '\n\n注意：续训将沿用源任务 config 中的架构参数（flow_mode/c_kl 等），表单里手动改的架构可能被覆盖。';
+                            msg += '\n提交后将进入队列。';
+                            return confirm(msg);
                         }
                     </script>
                     <div class="mb-3">
@@ -542,6 +620,7 @@ function loadQuickResume() {
                                 if (arch) { arch.value = 'sovits-v1'; toggleArch('sovits-v1'); }
                                 if (dscale) { dscale.value = 1.0; dscale.dataset.manual = '1'; }
                             }
+                            updateArchGuard();
                         }
                     </script>
                     <div class="mb-3">

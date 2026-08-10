@@ -2669,6 +2669,10 @@ def train_submit():
     if resume_from or quick_chain:
         src_cfg_path = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data',
                                     f'task_{chain_id}', 'config.json')
+        # 记录用户表单原始架构参数，用于防呆对比（config 覆盖时明确提示）
+        _form_flow = params.get('flow_mode')
+        _form_arch = params.get('arch')
+        _form_ckl = params.get('c_kl')
         if os.path.exists(src_cfg_path):
             try:
                 with open(src_cfg_path, 'r', encoding='utf-8') as f:
@@ -2704,6 +2708,22 @@ def train_submit():
         # A1（特征先验流）无 enc_q 提供 FM 目标，unified_flow 强制关闭（与 models.py/worker 一致）
         if params.get('flow_mode') == 'a1':
             params['use_unified_flow'] = False
+        # ---- 防呆：config 覆盖了用户表单的架构参数时，明确提示实际采用的配置 ----
+        try:
+            _changed = []
+            if _form_flow and _form_flow != params.get('flow_mode'):
+                _changed.append(f'flow_mode {_form_flow}→{params.get("flow_mode")}')
+            if _form_arch and _form_arch != params.get('arch'):
+                _changed.append(f'arch {_form_arch}→{params.get("arch")}')
+            try:
+                if _form_ckl is not None and abs(float(_form_ckl) - float(params.get('c_kl', 1.0))) > 1e-9:
+                    _changed.append(f'c_kl {_form_ckl}→{params.get("c_kl")}')
+            except (TypeError, ValueError):
+                pass
+            if _changed:
+                flash('续训已沿用源任务 config：' + '；'.join(_changed) + '。如需不同架构请新建任务（不要续训）', 'warning')
+        except Exception:
+            pass
 
     mt = request.form.get('model_type', 'sovits')
     total_steps = _int('total_steps', 4200)
