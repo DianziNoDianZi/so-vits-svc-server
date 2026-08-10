@@ -55,10 +55,20 @@
 
 在直连基础上加入轻量 TransformerFlow 增强特征表达，两种 flow 模式可切换：
 
-- `A1 特征先验流`（`flow_mode: "a1"`）：flow 正向变换特征，KL 约束到标准正态先验，用于架构对比
-- `A2 后验流`（`flow_mode: "a2"`，默认）：极小 enc_q（1 层 WN）从频谱提供后验，flow 做先验对齐，训练更稳
+- `A1 特征先验流`（`flow_mode: "a1"`）：flow 正向变换内容特征 `c`，KL 约束到**固定**标准正态先验 N(0,1)；训练与推理路径一致（都走 flow 正向），无后验编码器、无先验采样
+- `A2 后验流`（`flow_mode: "a2"`，默认）：极小 enc_q（1 层 WN）从频谱提供后验 `z_q`，flow 做先验↔后验对齐，训练更稳
 
 A2 用一个极轻量的 enc_q（1 层 WN）从输入频谱提取后验隐变量 `z_q`，flow 负责把标准正态先验对齐到 `z_q` 的分布。相比 A1 把整个特征空间硬约束到正态，A2 只让 flow 学一个「先验↔后验」的映射，KL 项更稳，小数据集也不易崩。
+
+**A1 特征先验流（详细）**
+
+设计目标是**解耦音色与发音**：A2 的 `z_q` 来自目标说话人频谱，同时耦合了音色和发音习惯，换音色时容易把目标说话人的咬字习惯一起带过来。A1 让 `z` 完全由源音频的内容特征 `c`（ContentVec 输出）决定，flow 只做 `c → z_p` 的正向编码，decoder 再从 `z_p` 还原频谱——发音信息来自源，音色信息来自 speaker embedding，互不污染。
+
+- **训练路径**：`x = pre(c) + emb_uv + vol` → `z_p = flow(x, x_mask, g=g)` → `dec(z_p_slice, g=g, f0=pitch_slice)`，全程**无 enc_q、无先验采样**，训练即推理。
+- **推理路径**：与训练完全一致，`z_p = flow(x)` → `dec(z_p)`，确定性正向变换（`noise_scale` 不影响 A1，因为无先验采样步骤）。
+- **固定先验 N(0,1)**：`m_p=0, logs_p=0`，KL 项简化为 `KL = -0.5 + 0.5 * ||z_p||²`，仅约束 flow 输出方差≈1 防止漂移。早期版本曾用 `prior_proj(x)` 学习先验均值/方差，但因 flow 和 prior_proj 共享输入 `x` 会**串谋**（两者一起把 KL 推向 -∞，实测 -262），已废弃并删除 `prior_proj`。
+- **`c_kl` 调整**：A1 的 KL 项数值范围与 A2 不同（A2 KL≈正值，A1 KL 可为负），默认 `c_kl=1.0` 会让 KL 损失主导并压制 mel 重建损失。实测 A1 推荐 `c_kl=0.1`，让 mel loss 成为主导项，KL 仅作轻度正则。
+- **不支持统一流/Hybrid**：统一流的 FM 训练需要 `enc_q` 提供 `z_q` 作为 FM 目标（`x_1 = z_q.detach()`），A1 无 `enc_q` 无法提供 FM 目标。代码层面 A1 强制使用 `TransformerCouplingBlock`（非 `GeneralizedFlow`），`infer_hybrid` 入口有断言阻止误调用。A1 推理只能走纯 NF 正向（`infer()`），但因其正向变换本身就是确定性的，无需 Hybrid 精修。
 
 ### 统一流（Unified Flow）
 
@@ -239,6 +249,8 @@ sudo bash deploy_linux.sh
 | `flow_mode` | rvc-flow 模式 | `a2`（推荐） |
 | `use_unified_flow` | 启用统一流（NF+FM 共享骨干，A2 专用） | false（A2 用户按需开 true） |
 | `c_fm` | FM loss 权重（仅统一流） | 0.5（过小如 0.1 会让 FM 学不动） |
+| `c_mel` | Mel 重建 loss 权重 | 45（一般不用动） |
+| `c_kl` | KL loss 权重 | A2 用 1.0；**A1 推荐 0.1**（A1 的 KL 可为负，1.0 会主导并压制 mel） |
 | `hybrid_steps` | Hybrid 推理 FM 精修步数 | 4（2 快但质量略降，8+ 收益递减） |
 | `ema_decay` / `ema_interval` | EMA 权重衰减 / 更新间隔（推理用 EMA 更稳） | 0.999 / 100 |
 
