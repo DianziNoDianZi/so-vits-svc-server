@@ -927,13 +927,21 @@ function loadQuickResume() {
     <div class="card-body">
         <h5 class="text-light">历史任务</h5>
         <table class="table table-dark table-sm">
-            <thead><tr><th>#</th><th>说话人</th><th>类型</th><th>状态</th><th>模型</th><th>时间</th></tr></thead>
+            <thead><tr><th>#</th><th>说话人</th><th>类型</th><th>架构</th><th>状态</th><th>模型</th><th>时间</th></tr></thead>
             <tbody>
                 {% for t in history %}
                 <tr>
                     <td>{{ t.id }}</td>
                     <td>{{ t.speaker }}</td>
                     <td>{{ t.model_type }}</td>
+                    <td>
+                        {% set ha = history_arch.get(t.id) %}
+                        {% if ha %}
+                        <span class="badge {{ 'bg-info' if ha.flow_mode == 'a1' else 'bg-secondary' }}">{{ ha.label }}</span>
+                        {% else %}
+                        <span class="text-secondary">—</span>
+                        {% endif %}
+                    </td>
                     <td>{{ t.status }}</td>
                     <td>
                         {% if t.model_path %}
@@ -950,7 +958,7 @@ function loadQuickResume() {
                     <td>{{ t.created_at.strftime('%m-%d %H:%M') }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="text-secondary">暂无历史任务</td></tr>
+                <tr><td colspan="7" class="text-secondary">暂无历史任务</td></tr>
                 {% endfor %}
             </tbody>
         </table>

@@ -34,6 +34,7 @@ class Model(db.Model):
     diff_model_path = db.Column(db.String(500), nullable=True)   # model_*.pt（扩散模型）
     diff_config_path = db.Column(db.String(500), nullable=True)  # diffusion.yaml（扩散配置）
     cluster_path = db.Column(db.String(500), nullable=True)      # kmeans_*.pt
+    tags = db.Column(db.String(500), nullable=True)              # 用户自定义标签，逗号分隔
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     configs = db.relationship('InferenceConfig', backref='model', lazy='dynamic')

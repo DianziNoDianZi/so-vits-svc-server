@@ -13,9 +13,10 @@
     <div class="col-md-3">
         <select id="modelArchFilter" class="form-select bg-dark text-light border-secondary">
             <option value="">全部架构</option>
+            <option value="a1">A1 特征先验流</option>
+            <option value="a2">A2 后验流</option>
             <option value="sovits-v1">SoVITS v1</option>
-            <option value="rvc">RVC</option>
-            <option value="rvc-flow">RVC-Flow</option>
+            <option value="rvc">RVC 轻量架构</option>
         </select>
     </div>
     <div class="col-md-3">
@@ -34,6 +35,7 @@
             <tr>
                 <th>名称</th>
                 <th>架构</th>
+                <th>标签</th>
                 <th>ONNX</th>
                 <th>模型文件</th>
                 <th>扩散</th>
@@ -44,9 +46,15 @@
         </thead>
         <tbody>
             {% for item in model_items %}
-            <tr data-name="{{ item.m.name|lower }}" data-file="{{ item.m.model_path|lower }}" data-arch="{{ item.arch }}" data-time="{{ item.m.created_at.timestamp() }}">
+            <tr data-name="{{ item.m.name|lower }}" data-file="{{ item.m.model_path|lower }}" data-arch="{{ item.arch }}" data-flow-mode="{{ item.flow_mode }}" data-tags="{{ item.tags|join(',')|lower }}" data-time="{{ item.m.created_at.timestamp() }}">
                 <td>{{ item.m.name }}</td>
-                <td><span class="badge bg-secondary">{{ item.arch }}</span></td>
+                <td><span class="badge {{ 'bg-info' if item.flow_mode == 'a1' else 'bg-secondary' }}">{{ item.arch_label }}</span></td>
+                <td>
+                    {% for tag in item.tags %}
+                    <span class="badge bg-primary me-1">{{ tag }}</span>
+                    {% endfor %}
+                    {% if not item.tags %}<span class="text-secondary">—</span>{% endif %}
+                </td>
                 <td>{{ '✅' if item.onnx else '—' }}</td>
                 <td><small>{{ item.m.model_path[:30] }}...</small></td>
                 <td>{{ '✅' if item.m.diff_model_path else '—' }}</td>
@@ -92,8 +100,8 @@
         var arch = archEl.value;
         var sort = sortEl.value;
         var visible = rows.filter(function (r) {
-            if (q && r.dataset.name.indexOf(q) === -1 && r.dataset.file.indexOf(q) === -1) return false;
-            if (arch && r.dataset.arch !== arch) return false;
+            if (q && r.dataset.name.indexOf(q) === -1 && r.dataset.file.indexOf(q) === -1 && (r.dataset.tags || '').indexOf(q) === -1) return false;
+            if (arch && r.dataset.flowMode !== arch) return false;
             return true;
         });
         visible.sort(function (a, b) {

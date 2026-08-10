@@ -68,6 +68,10 @@ def migrate_db():
     for col, typ in user_cols:
         if col not in ucols:
             db.session.execute(sa.text(f'ALTER TABLE user ADD COLUMN {col} {typ}'))
+    # migration for model table (自定义标签)
+    mcols = [c['name'] for c in inspector.get_columns('model')]
+    if 'tags' not in mcols:
+        db.session.execute(sa.text('ALTER TABLE model ADD COLUMN tags VARCHAR(500)'))
     db.session.commit()
 
 
@@ -725,6 +729,60 @@ def dashboard():
 
 # ========== 模型管理 ==========
 
+def _arch_label_from_cfg(cfg):
+    """从 config dict 提取架构展示标签。返回 (label, sub)"""
+    m = cfg.get('model') or {}
+    arch = m.get('arch', '')
+    if arch == 'rvc-flow':
+        fm = m.get('flow_mode', 'a2')
+        uni = m.get('use_unified_flow', False)
+        if fm == 'a1':
+            return 'A1 特征先验流', 'a1'
+        return 'A2 后验流' + (' + 统一流' if uni else ''), 'a2'
+    if arch == 'rvc':
+        return 'RVC 轻量架构', 'rvc'
+    return 'SoVITS v1', 'sovits-v1'
+
+
+def _read_model_cfg(cfg_path):
+    """读取 uploads/configs 下的模型 config，失败返回 {}"""
+    if not cfg_path:
+        return {}
+    cfg_p = os.path.join(app.config['UPLOAD_FOLDER'], 'configs', cfg_path)
+    if not os.path.exists(cfg_p):
+        return {}
+    try:
+        with open(cfg_p, 'r', encoding='utf-8') as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _task_arch_from_config(t):
+    """读取训练任务实际使用的架构（任务目录独立 config.json 为权威，params_json 兜底）。
+    返回 (arch, flow_mode, use_unified_flow)。"""
+    src_id = t.resume_from_id or t.id
+    td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{src_id}')
+    arch, flow_mode, unified = 'sovits-v1', 'a2', False
+    try:
+        cfg_p = os.path.join(td, 'config.json')
+        if os.path.exists(cfg_p):
+            with open(cfg_p, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            m = cfg.get('model') or {}
+            arch = m.get('arch', arch)
+            flow_mode = m.get('flow_mode', flow_mode)
+            unified = m.get('use_unified_flow', unified)
+        else:
+            p = json.loads(t.params_json or '{}') or {}
+            arch = p.get('arch', arch)
+            flow_mode = p.get('flow_mode', flow_mode)
+            unified = p.get('use_unified_flow', unified)
+    except Exception:
+        pass
+    return arch, flow_mode, bool(unified)
+
+
 @app.route('/models')
 @login_required
 def model_list():
@@ -732,20 +790,19 @@ def model_list():
     # 读取每个模型的架构（用于列表筛选）
     model_items = []
     for m in models:
-        arch = ''
-        if m.config_path:
-            cfg_p = os.path.join(app.config['UPLOAD_FOLDER'], 'configs', m.config_path)
-            if os.path.exists(cfg_p):
-                try:
-                    with open(cfg_p, 'r', encoding='utf-8') as f:
-                        arch = (json.load(f).get('model') or {}).get('arch', '')
-                except Exception:
-                    arch = ''
+        cfg = _read_model_cfg(m.config_path)
+        arch = (cfg.get('model') or {}).get('arch', '')
+        label, sub = _arch_label_from_cfg(cfg)
         onnx_exists = False
         if m.model_path:
             onnx_exists = os.path.exists(
                 os.path.join(app.config['UPLOAD_FOLDER'], 'models', m.model_path + '.onnx'))
-        model_items.append({'m': m, 'arch': arch or 'sovits-v1', 'onnx': onnx_exists})
+        model_items.append({
+            'm': m, 'arch': arch or 'sovits-v1', 'arch_label': label, 'flow_mode': sub,
+            'c_kl': (cfg.get('train') or {}).get('c_kl'),
+            'tags': [t.strip() for t in (m.tags or '').split(',') if t.strip()],
+            'onnx': onnx_exists,
+        })
     return render_template('models_list.html', model_items=model_items)
 
 
@@ -839,6 +896,7 @@ def model_edit(model_id):
 
     if request.method == 'POST':
         m.name = request.form.get('name', m.name).strip()
+        m.tags = request.form.get('tags', '').strip() or None
         diff_file = request.files.get('diff_file')
         diff_config_file = request.files.get('diff_config_file')
         cluster_file = request.files.get('cluster_file')
@@ -2445,27 +2503,17 @@ def train_page():
                 if f.startswith('G_') and f.endswith('.pth'):
                     latest_step = max(latest_step, int(''.join(c for c in f if c.isdigit()) or 0))
         if latest_step > 0:
-            # 架构参数权威来源：任务目录的独立 config.json（params_json 可能缺字段）
-            _arch, _flow_mode, _unified = 'sovits-v1', 'a2', False
-            _cfg_path = os.path.join(td, 'config.json')
-            try:
-                if os.path.exists(_cfg_path):
-                    with open(_cfg_path, 'r', encoding='utf-8') as f:
-                        _cfg = json.load(f)
-                    _arch = (_cfg.get('model', {}) or {}).get('arch', _arch)
-                    _flow_mode = (_cfg.get('model', {}) or {}).get('flow_mode', _flow_mode)
-                    _unified = (_cfg.get('model', {}) or {}).get('use_unified_flow', _unified)
-                else:
-                    _srcp = json.loads(t.params_json or '{}') or {}
-                    _arch = _srcp.get('arch', _arch)
-                    _flow_mode = _srcp.get('flow_mode', _flow_mode)
-                    _unified = _srcp.get('use_unified_flow', _unified)
-            except Exception:
-                pass
+            _arch, _flow_mode, _unified = _task_arch_from_config(t)
             history_resumable.append({
                 'id': t.id, 'speaker': t.speaker, 'model_type': t.model_type, 'step': latest_step,
                 'arch': _arch, 'flow_mode': _flow_mode, 'use_unified_flow': _unified,
             })
+    # 历史任务附加架构标签（供列表展示）
+    history_arch = {}
+    for t in history:
+        _arch, _flow_mode, _unified = _task_arch_from_config(t)
+        _label, _ = _arch_label_from_cfg({'model': {'arch': _arch, 'flow_mode': _flow_mode, 'use_unified_flow': _unified}})
+        history_arch[t.id] = {'arch': _arch, 'flow_mode': _flow_mode, 'use_unified_flow': _unified, 'label': _label}
     # 快速恢复快照（停止后一键继续上次训练）
     qr_meta = None
     qr_path = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', 'quick_resume', 'meta.json')
@@ -2485,7 +2533,7 @@ def train_page():
         stages=STAGES, current_stage=current_stage,
         stage_index=next((i for i, (k, _) in enumerate(STAGES) if k == current_stage), 0),
         running=running, queued=queued, done_count=done_count,
-        history=history, history_resumable=history_resumable,
+        history=history, history_resumable=history_resumable, history_arch=history_arch,
         quick_resume=qr_meta,
         alive=active is not None)
 
