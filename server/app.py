@@ -17,7 +17,7 @@ import threading
 import time
 import traceback
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -29,14 +29,15 @@ from flask_login import (
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
-from config import Config
-from extensions import db, login_manager, init_sqlite_pragmas
-from db_models import User, Model, InferenceConfig, Task, TrainingTask, DEFAULT_PARAMS
-
 # ─── 项目路径 ───
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
+
+from authorization import can_manage_model, can_use_model, is_active_user, is_admin
+from config import Config
+from extensions import db, login_manager, init_sqlite_pragmas
+from db_models import DEFAULT_PARAMS, InferenceConfig, Model, ServerSetting, StoredFile, Task, User, UserQuota
 
 
 def generate_random_password(length=12):
@@ -47,31 +48,48 @@ def generate_random_password(length=12):
 def migrate_db():
     import sqlalchemy as sa
     inspector = sa.inspect(db.engine)
-    cols = [c['name'] for c in inspector.get_columns('training_task')]
-    train_cols = [('params_json', 'TEXT'), ('diff_model_path', 'VARCHAR(500)'),
-                  ('config_path', 'VARCHAR(500)'), ('diff_config_path', 'VARCHAR(500)'),
-                  ('resume_from_id', 'INTEGER'),
-                  ('anomaly_token', 'VARCHAR(64)'), ('anomaly_state', 'VARCHAR(20)')]
-    for col, typ in train_cols:
-        if col not in cols:
-            db.session.execute(sa.text(f'ALTER TABLE training_task ADD COLUMN {col} {typ}'))
     # migration for inference task (覆盖参数)
     tcols = [c['name'] for c in inspector.get_columns('task')]
     if 'params_json' not in tcols:
         db.session.execute(sa.text('ALTER TABLE task ADD COLUMN params_json TEXT'))
     # migration for user table
     ucols = [c['name'] for c in inspector.get_columns('user')]
-    user_cols = [('email', 'VARCHAR(200)'), ('email_notify', 'BOOLEAN'),
-                 ('smtp_user', 'VARCHAR(200)'), ('smtp_pwd', 'VARCHAR(200)'),
+    user_cols = [('role', 'VARCHAR(20)'), ('is_active', 'BOOLEAN'), ('must_change_password', 'BOOLEAN'),
+                 ('email', 'VARCHAR(200)'), ('notify_email', 'VARCHAR(200)'),
+                 ('email_notify', 'BOOLEAN'), ('smtp_user', 'VARCHAR(200)'), ('smtp_pwd', 'VARCHAR(200)'),
                  ('smtp_host', 'VARCHAR(200)'), ('smtp_port', 'INTEGER'),
                  ('report_interval', 'INTEGER'), ('infer_notify', 'BOOLEAN')]
     for col, typ in user_cols:
         if col not in ucols:
             db.session.execute(sa.text(f'ALTER TABLE user ADD COLUMN {col} {typ}'))
-    # migration for model table (自定义标签)
+    # migration for user_quota table
+    db.create_all()
+    # migration for model table
     mcols = [c['name'] for c in inspector.get_columns('model')]
-    if 'tags' not in mcols:
-        db.session.execute(sa.text('ALTER TABLE model ADD COLUMN tags VARCHAR(500)'))
+    model_cols = [('visibility', 'VARCHAR(20)'), ('status', 'VARCHAR(20)'), ('description', 'VARCHAR(500)'),
+                  ('version', 'VARCHAR(100)'), ('review_note', 'VARCHAR(500)'), ('reviewed_at', 'DATETIME'),
+                  ('tags', 'VARCHAR(500)')]
+    for col, typ in model_cols:
+        if col not in mcols:
+            db.session.execute(sa.text(f'ALTER TABLE model ADD COLUMN {col} {typ}'))
+    # migration for task table
+    tcols = [c['name'] for c in inspector.get_columns('task')]
+    task_cols = [('model_id', 'INTEGER'), ('input_bytes', 'INTEGER'), ('input_duration', 'FLOAT'),
+                 ('attempt_count', 'INTEGER'), ('priority_snapshot', 'INTEGER'), ('quota_snapshot_json', 'TEXT'),
+                 ('lease_expires_at', 'DATETIME'), ('heartbeat_at', 'DATETIME'), ('claimed_by', 'VARCHAR(100)'),
+                 ('cancel_requested_at', 'DATETIME'), ('cancel_reason', 'VARCHAR(500)'),
+                 ('result_expires_at', 'DATETIME')]
+    for col, typ in task_cols:
+        if col not in tcols:
+            db.session.execute(sa.text(f'ALTER TABLE task ADD COLUMN {col} {typ}'))
+    # 兼容旧库：新列 ALTER 后历史行是 NULL，必须回填，否则登录被 user_loader/login_user 拒绝
+    try:
+        db.session.execute(sa.text("UPDATE user SET is_active = 1 WHERE is_active IS NULL"))
+        db.session.execute(sa.text("UPDATE user SET role = 'user' WHERE role IS NULL"))
+        db.session.execute(sa.text("UPDATE user SET role = 'admin' WHERE username = 'admin'"))
+        db.session.execute(sa.text("UPDATE user SET must_change_password = 0 WHERE must_change_password IS NULL"))
+    except Exception:
+        pass
     db.session.commit()
 
 
@@ -79,14 +97,23 @@ def init_admin():
     """首次启动创建管理员并生成随机密码；已存在账号绝不重置密码。"""
     admin = User.query.filter_by(username='admin').first()
     if admin:
+        if getattr(admin, 'role', 'user') != 'admin':
+            admin.role = 'admin'
+            db.session.commit()
         return False, None
     password = generate_random_password()
     admin = User(
         username='admin',
         password_hash=generate_password_hash(password),
+        role='admin',
+        is_active=True,
+        must_change_password=True,
     )
     db.session.add(admin)
     db.session.commit()
+    if not UserQuota.query.filter_by(user_id=admin.id).first():
+        db.session.add(UserQuota(user_id=admin.id, priority=10, max_queued_tasks=10, max_running_tasks=1, daily_audio_seconds=10**9, storage_quota_bytes=10**12, max_model_bytes=10**12, max_private_models=100, results_retention_days=7))
+        db.session.commit()
     return True, password
 
 
@@ -133,6 +160,69 @@ def _csrf_token():
     if '_csrf_token' not in session:
         session['_csrf_token'] = secrets.token_hex(32)
     return session['_csrf_token']
+
+
+def _current_quota(user):
+    quota = UserQuota.query.filter_by(user_id=user.id).first()
+    if quota:
+        return quota
+    quota = UserQuota(
+        user_id=user.id,
+        max_queued_tasks=int(_get_setting('default_max_queued', 4)),
+        max_running_tasks=int(_get_setting('default_max_running', 1)),
+        max_input_seconds=int(_get_setting('default_max_input_seconds', 600)),
+        daily_audio_seconds=int(_get_setting('default_daily_audio_seconds', 3600)),
+        storage_quota_bytes=int(_get_setting('default_storage_quota_bytes', 10 * 1024 ** 3)),
+        max_model_bytes=int(_get_setting('default_max_model_bytes', 4 * 1024 ** 3)),
+        max_private_models=int(_get_setting('default_max_private_models', 3)),
+        priority=int(_get_setting('default_priority', 1)),
+        results_retention_days=int(_get_setting('default_result_retention_days', 7)),
+    )
+    db.session.add(quota)
+    db.session.commit()
+    return quota
+
+
+def _usable_models_for(user):
+    models = Model.query.order_by(Model.created_at.desc()).all()
+    if is_admin(user):
+        return [m for m in models if getattr(m, 'status', 'ready') != 'disabled']
+    return [m for m in models if can_use_model(user, m)]
+
+
+def _model_visible_to_user(user, model):
+    return can_use_model(user, model)
+
+
+def _today_cutoff():
+    now = datetime.utcnow()
+    return datetime(now.year, now.month, now.day)
+
+
+_SMTP_ENV_MAP = {
+    'smtp_host': 'SMTP_HOST',
+    'smtp_port': 'SMTP_PORT',
+    'smtp_user': 'SMTP_USER',
+    'smtp_pass': 'SMTP_PASS',
+    'mail_from': 'MAIL_FROM',
+}
+
+
+def _get_setting(key, default=None):
+    env = _SMTP_ENV_MAP.get(key)
+    if env and os.environ.get(env):
+        return os.environ[env]
+    row = db.session.get(ServerSetting, key)
+    return row.value if row and row.value else default
+
+
+def _set_setting(key, value):
+    row = db.session.get(ServerSetting, key)
+    if row:
+        row.value = value
+    else:
+        db.session.add(ServerSetting(key=key, value=value))
+    db.session.commit()
 
 
 @app.before_request
@@ -182,10 +272,40 @@ def _clear_login_failures(remote_addr):
         _login_attempts.pop(remote_addr, None)
 
 
+# ========== 注册限速（内存级，防刷号） ==========
+
+_register_attempts = {}
+_register_lock = threading.Lock()
+_REGISTER_MAX = 5
+_REGISTER_WINDOW = 3600  # 秒
+
+
+def _register_blocked(remote_addr):
+    with _register_lock:
+        info = _register_attempts.get(remote_addr)
+        if info and info.get('count', 0) >= _REGISTER_MAX and time.time() < info.get('ts', 0) + _REGISTER_WINDOW:
+            return True
+        return False
+
+
+def _record_register(remote_addr):
+    with _register_lock:
+        now = time.time()
+        info = _register_attempts.get(remote_addr)
+        if not info or now - info.get('ts', 0) > _REGISTER_WINDOW:
+            info = {'count': 0, 'ts': now}
+        info['count'] += 1
+        info['ts'] = now
+        _register_attempts[remote_addr] = info
+
+
 @login_manager.user_loader
 def load_user(user_id):
     try:
-        return db.session.get(User, int(user_id))
+        user = db.session.get(User, int(user_id))
+        if user and not is_active_user(user):
+            return None
+        return user
     except Exception:
         return None
 
@@ -220,34 +340,6 @@ def safe_join(base, *parts):
     return full
 
 
-def _latest_g_checkpoint(directory):
-    """返回目录中步数最大的 G_*.pth 文件名，没有则返回 None。"""
-    best, best_n = None, -1
-    try:
-        names = os.listdir(directory)
-    except OSError:
-        return None
-    for f in names:
-        if f.startswith('G_') and f.endswith('.pth'):
-            n = int(''.join(c for c in f if c.isdigit()) or 0)
-            if n > best_n:
-                best, best_n = f, n
-    return best
-
-
-def _chain_root_id(task):
-    """沿 resume_from 链向上找最原始的任务 id（SoVITS/扩散 checkpoint 的归属目录）。"""
-    seen = set()
-    root = task.id
-    cur = task.resume_from_id
-    while cur and cur not in seen:
-        seen.add(cur)
-        root = cur
-        prev = db.session.get(TrainingTask, cur)
-        cur = prev.resume_from_id if prev else None
-    return root
-
-
 # ========== 登录/注册 ==========
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -261,14 +353,74 @@ def login():
             password = request.form.get('password', '')
             user = User.query.filter_by(username=username).first()
             if user and check_password_hash(user.password_hash, password):
-                _clear_login_failures(remote)
-                login_user(user)
-                if 'password_changed' not in session or not session.get('password_changed'):
-                    return redirect(url_for('change_password'))
-                return redirect(url_for('dashboard'))
+                if login_user(user):
+                    _clear_login_failures(remote)
+                    if getattr(user, 'must_change_password', False):
+                        return redirect(url_for('change_password'))
+                    return redirect(url_for('dashboard'))
             _record_login_failure(remote)
             flash('用户名或密码错误', 'danger')
     return render_template('login.html')
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if _get_setting('allow_registration', os.environ.get('ALLOW_REGISTRATION', '1')) != '1':
+        flash('当前未开放注册', 'danger')
+        return redirect(url_for('login'))
+    if request.method == 'POST':
+        remote = request.remote_addr or 'unknown'
+        if _register_blocked(remote):
+            flash('注册尝试过于频繁，请稍后再试', 'danger')
+            return render_template('register.html')
+
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        confirm = request.form.get('confirm_password', '')
+        email = request.form.get('email', '').strip()
+        notify_email = request.form.get('notify_email', '').strip()
+
+        errors = []
+        if len(username) < 2:
+            errors.append('用户名至少 2 个字符')
+        if len(password) < 6:
+            errors.append('密码至少 6 位')
+        if password != confirm:
+            errors.append('两次密码不一致')
+        if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
+            errors.append('邮箱格式不正确')
+        if notify_email and not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', notify_email):
+            errors.append('结果接收邮箱格式不正确')
+        if not errors and User.query.filter_by(username=username).first():
+            errors.append('用户名已存在')
+
+        if errors:
+            _record_register(remote)
+            for e in errors:
+                flash(e, 'danger')
+            return render_template('register.html', username=username, email=email, notify_email=notify_email)
+
+        user = User(
+            username=username,
+            password_hash=generate_password_hash(password),
+            role='user',
+            is_active=True,
+            email=email or None,
+            notify_email=notify_email or None,
+            infer_notify=True,
+        )
+        db.session.add(user)
+        db.session.commit()
+        _current_quota(user)  # 生成默认配额
+        login_user(user)
+        try:
+            from notifier import notify_welcome
+            notify_welcome(user)
+        except Exception:
+            pass
+        flash('注册成功，欢迎使用', 'success')
+        return redirect(url_for('dashboard'))
+    return render_template('register.html')
 
 
 @app.route('/change-password', methods=['GET', 'POST'])
@@ -300,279 +452,19 @@ def change_password():
                 return render_template('change_password.html')
             current_user.password_hash = generate_password_hash(new)
 
+        current_user.must_change_password = False
         db.session.commit()
-        session['password_changed'] = True
         flash('设置已保存', 'success')
         return redirect(url_for('dashboard'))
 
     return render_template('change_password.html')
 
 
-@app.route('/clean-cache', methods=['POST'])
-@login_required
-def clean_cache():
-    import shutil, glob as _glob
-    clean_base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    deleted = 0
-    msgs = []
-
-    if request.form.get('clean_cache_files'):
-        for root, dirs, _ in os.walk(clean_base):
-            if '__pycache__' in dirs:
-                p = os.path.join(root, '__pycache__')
-                shutil.rmtree(p, ignore_errors=True)
-                deleted += 1
-        for f in _glob.glob(os.path.join(clean_base, '**', '*.pyc'), recursive=True):
-            try:
-                os.remove(f)
-                deleted += 1
-            except Exception:
-                pass
-        msgs.append('Python 缓存')
-
-    if request.form.get('clean_error_logs'):
-        now = time.time()
-        for f in _glob.glob(os.path.join(app.config['UPLOAD_FOLDER'], 'results', 'error_*.log')):
-            try:
-                age = now - os.path.getmtime(f)
-                if age > 86400 * 3:
-                    os.remove(f)
-                    deleted += 1
-            except Exception:
-                pass
-        msgs.append('错误日志')
-
-    if request.form.get('clean_old_tasks'):
-        cutoff = datetime.utcnow().timestamp() - 86400 * 7
-        old_tasks = Task.query.filter(
-            Task.user_id == current_user.id,
-            Task.status.in_(['done', 'failed']),
-            Task.done_at.isnot(None),
-            Task.done_at < datetime.utcfromtimestamp(cutoff),
-        ).all()
-        for t in old_tasks:
-            if t.result_filename:
-                rp = os.path.join(app.config['UPLOAD_FOLDER'], 'results', t.result_filename)
-                try:
-                    os.remove(rp)
-                    deleted += 1
-                except Exception:
-                    pass
-            db.session.delete(t)
-            deleted += 1
-        if old_tasks:
-            db.session.commit()
-        msgs.append('旧任务')
-
-    if request.form.get('clean_all_tasks'):
-        all_done = Task.query.filter(
-            Task.user_id == current_user.id,
-            Task.status.in_(['done', 'failed']),
-        ).all()
-        for t in all_done:
-            if t.result_filename:
-                rp = os.path.join(app.config['UPLOAD_FOLDER'], 'results', t.result_filename)
-                try:
-                    os.remove(rp)
-                    deleted += 1
-                except Exception:
-                    pass
-            db.session.delete(t)
-            deleted += 1
-        if all_done:
-            db.session.commit()
-        msgs.append('所有已完成/失败推理任务')
-
-    if request.form.get('clean_train_data'):
-        import shutil
-        train_data = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data')
-        # 保护仍在排队/运行中的任务：不删除它们的 zip 和数据目录
-        busy = TrainingTask.query.filter(TrainingTask.status.in_(['pending', 'running'])).all()
-        busy_dirs = {f'task_{t.id}' for t in busy}
-        busy_zips = {t.dataset_zip for t in busy if t.dataset_zip}
-        if os.path.exists(train_data):
-            sizes = []
-            for d in os.listdir(train_data):
-                dp = os.path.join(train_data, d)
-                if d in busy_dirs:
-                    continue
-                if os.path.isdir(dp):
-                    sz = sum(f.stat().st_size for f in os.scandir(dp) if f.is_file()) // 1048576
-                    sizes.append(f'{d}({sz}MB)')
-                    shutil.rmtree(dp, ignore_errors=True)
-                    deleted += 1
-            msgs.append(f'训练数据({", ".join(sizes)})')
-        # 清理留下的 zip
-        dz = os.path.join(app.config['UPLOAD_FOLDER'], 'dataset_zips')
-        if os.path.exists(dz):
-            for f in os.listdir(dz):
-                if f in busy_zips:
-                    continue
-                fp = os.path.join(dz, f)
-                try:
-                    os.remove(fp)
-                    deleted += 1
-                except Exception:
-                    pass
-        # 清理失败训练任务
-        failed_tasks = TrainingTask.query.filter(
-            TrainingTask.user_id == current_user.id,
-            TrainingTask.status.in_(['failed', 'done']),
-        ).all()
-        for t in failed_tasks:
-            db.session.delete(t)
-            deleted += 1
-        db.session.commit()
-        msgs.append('训练缓存+失败任务')
-
-    if not msgs:
-        flash('没有选择任何清理项', 'warning')
-    else:
-        flash(f'清理完成：{", ".join(msgs)}，共处理 {deleted} 项', 'success')
-    return redirect(url_for('settings'))
-
-
-def _settings_context():
-    """设置页需要的精确清理数据。"""
-    train_tasks = TrainingTask.query.filter_by(user_id=current_user.id).order_by(TrainingTask.id.desc()).all()
-    models = Model.query.filter_by(user_id=current_user.id).order_by(Model.id.desc()).all()
-    dz = os.path.join(app.config['UPLOAD_FOLDER'], 'dataset_zips')
-    dataset_zips = sorted(os.listdir(dz)) if os.path.isdir(dz) else []
-    return {'train_tasks': train_tasks, 'models': models, 'dataset_zips': dataset_zips}
-
-
-@app.route('/clean/specific', methods=['POST'])
-@login_required
-def clean_specific():
-    """精确清理：按单个训练任务 / 模型 / 数据集，带防误伤检查。"""
-    ttype = request.form.get('target_type', '')
-    target_id = request.form.get('target_id', type=int)
-    action = request.form.get('action', '')
-    uid = current_user.id
-
-    if ttype == 'train_task':
-        task = db.session.get(TrainingTask, target_id)
-        if not task or task.user_id != uid:
-            flash('训练任务不存在', 'danger')
-            return redirect(url_for('settings'))
-        if task.status in ('pending', 'running'):
-            flash(f'任务 #{task.id} 正在排队/运行中，清理会破坏它，已取消', 'danger')
-            return redirect(url_for('settings'))
-
-        chain_id = task.resume_from_id or task.id
-        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{chain_id}')
-        done = []
-
-        if action in ('data_dir', 'all'):
-            if os.path.isdir(td):
-                shutil.rmtree(td, ignore_errors=True)
-                done.append('训练数据目录（该任务将无法续训）')
-
-        if action in ('zip', 'all'):
-            if task.dataset_zip:
-                busy = TrainingTask.query.filter(
-                    TrainingTask.status.in_(['pending', 'running']),
-                    TrainingTask.dataset_zip == task.dataset_zip,
-                ).count()
-                if busy:
-                    flash(f'数据集 {task.dataset_zip} 仍被 {busy} 个排队/运行任务使用，已跳过', 'warning')
-                else:
-                    zp = os.path.join(app.config['UPLOAD_FOLDER'], 'dataset_zips', task.dataset_zip)
-                    if os.path.exists(zp):
-                        os.remove(zp)
-                        done.append(f'数据集 {task.dataset_zip}')
-
-        if action in ('model_files', 'all'):
-            for attr, sub in (('model_path', 'models'), ('config_path', 'configs'),
-                              ('diff_model_path', 'models'), ('diff_config_path', 'configs')):
-                p = getattr(task, attr)
-                if not p:
-                    continue
-                ref = Model.query.filter(sa.or_(
-                    Model.model_path == p, Model.config_path == p,
-                    Model.diff_model_path == p, Model.diff_config_path == p,
-                )).first()
-                if ref:
-                    flash(f'{os.path.basename(p)} 被模型 #{ref.id} 引用，已跳过', 'warning')
-                    continue
-                fp = os.path.join(app.config['UPLOAD_FOLDER'], sub, os.path.basename(p))
-                if os.path.exists(fp):
-                    os.remove(fp)
-                    done.append(os.path.basename(p))
-
-        if action == 'all':
-            task.model_path = task.config_path = task.diff_model_path = task.diff_config_path = None
-        db.session.commit()
-        if done:
-            flash('已清理: ' + ', '.join(done), 'success')
-        else:
-            flash('没有可清理的内容', 'warning')
-
-    elif ttype == 'model':
-        m = db.session.get(Model, target_id)
-        if not m or m.user_id != uid:
-            flash('模型不存在', 'danger')
-            return redirect(url_for('settings'))
-        config_ids = [c.id for c in InferenceConfig.query.filter_by(model_id=m.id).all()]
-        if config_ids:
-            running = Task.query.filter(
-                Task.config_id.in_(config_ids),
-                Task.status.in_(['pending', 'running']),
-            ).count()
-            if running:
-                flash(f'模型 #{m.id} 正被 {running} 个排队/运行推理任务使用，已取消删除', 'danger')
-                return redirect(url_for('settings'))
-        InferenceConfig.query.filter_by(model_id=m.id).delete()
-        removed = []
-        for p in (m.model_path, m.config_path, m.diff_model_path, m.diff_config_path, m.cluster_path):
-            if not p:
-                continue
-            sub = 'models' if p.lower().endswith(('.pth', '.pt')) else 'configs'
-            fp = os.path.join(app.config['UPLOAD_FOLDER'], sub, os.path.basename(p))
-            if os.path.exists(fp):
-                os.remove(fp)
-                removed.append(os.path.basename(p))
-        db.session.delete(m)
-        db.session.commit()
-        flash(f'模型 #{m.id} 已删除（含文件与关联推理配置）', 'success')
-
-    elif ttype == 'dataset_zip':
-        name = request.form.get('target_name', '').strip()
-        zp = os.path.join(app.config['UPLOAD_FOLDER'], 'dataset_zips', os.path.basename(name))
-        if not name or not os.path.exists(zp):
-            flash('数据集不存在', 'danger')
-            return redirect(url_for('settings'))
-        busy = TrainingTask.query.filter(
-            TrainingTask.status.in_(['pending', 'running']),
-            TrainingTask.dataset_zip == name,
-        ).count()
-        if busy:
-            flash(f'该数据集仍被 {busy} 个排队/运行任务使用，已取消删除', 'danger')
-        else:
-            os.remove(zp)
-            flash(f'已删除数据集 {name}', 'success')
-
-    return redirect(url_for('settings'))
-
-
 @app.route('/save-notify', methods=['POST'])
 @login_required
 def save_notify():
     current_user.email = request.form.get('email', '').strip() or None
-    current_user.email_notify = request.form.get('email_notify') == '1'
-    current_user.smtp_user = request.form.get('smtp_user', '').strip() or None
-    smtp_pwd = request.form.get('smtp_pwd', '').strip()
-    if smtp_pwd:
-        current_user.smtp_pwd = smtp_pwd
-    current_user.smtp_host = request.form.get('smtp_host', '').strip() or None
-    try:
-        current_user.smtp_port = int(request.form.get('smtp_port', 465) or 465)
-    except (ValueError, TypeError):
-        current_user.smtp_port = 465
-    try:
-        current_user.report_interval = int(request.form.get('report_interval', 0) or 0)
-    except (ValueError, TypeError):
-        current_user.report_interval = 0
+    current_user.notify_email = request.form.get('notify_email', '').strip() or None
     current_user.infer_notify = request.form.get('infer_notify') == '1'
     db.session.commit()
     flash('通知设置已保存', 'success')
@@ -582,15 +474,17 @@ def save_notify():
 @app.route('/test-notify', methods=['POST'])
 @login_required
 def test_notify():
-    from notifier import send as send_mail
+    from notifier import send_via_server
     u = current_user
-    ok = send_mail(u.email, u.smtp_user, u.smtp_pwd,
-                   '[SoVITS] 测试通知', '这是一封测试邮件，通知配置正常！',
-                   host=u.smtp_host or None, port=u.smtp_port or None)
+    recipient = getattr(u, 'notify_email', None) or u.email
+    if not recipient:
+        flash('请先填写接收邮箱', 'danger')
+        return redirect(url_for('settings'))
+    ok = send_via_server(recipient, '[SoVITS] 测试通知', '这是一封测试邮件，通知配置正常！')
     if ok:
         flash('测试邮件已发送，请检查收件箱', 'success')
     else:
-        flash('发送失败，请检查邮箱配置', 'danger')
+        flash('发送失败，请检查服务器 SMTP 配置', 'danger')
     return redirect(url_for('settings'))
 
 
@@ -605,109 +499,35 @@ def settings():
 
         if not check_password_hash(current_user.password_hash, old):
             flash('当前密码错误', 'danger')
-            return render_template('settings.html', **_settings_context())
-
-        # 推理默认值
-        current_user.device_pref = request.form.get('device_pref', 'auto')
-        try:
-            current_user.memory_limit = float(request.form.get('memory_limit', 0))
-        except (ValueError, TypeError):
-            current_user.memory_limit = 0
+            return render_template('settings.html')
 
         # 通知设置
         current_user.email = request.form.get('email', '').strip() or None
-        current_user.email_notify = request.form.get('email_notify') == '1'
-        current_user.smtp_user = request.form.get('smtp_user', '').strip() or None
-        smtp_pwd = request.form.get('smtp_pwd', '').strip()
-        if smtp_pwd:
-            current_user.smtp_pwd = smtp_pwd
-        current_user.smtp_host = request.form.get('smtp_host', '').strip() or None
-        try:
-            current_user.smtp_port = int(request.form.get('smtp_port', 465) or 465)
-        except (ValueError, TypeError):
-            current_user.smtp_port = 465
-        try:
-            current_user.report_interval = int(request.form.get('report_interval', 0) or 0)
-        except (ValueError, TypeError):
-            current_user.report_interval = 0
+        current_user.notify_email = request.form.get('notify_email', '').strip() or None
         current_user.infer_notify = request.form.get('infer_notify') == '1'
 
         if new_username and new_username != current_user.username:
             existing = User.query.filter_by(username=new_username).first()
             if existing:
                 flash('用户名已存在', 'danger')
-                return render_template('settings.html', **_settings_context())
+                return render_template('settings.html')
             current_user.username = new_username
 
         if new:
             if len(new) < 6:
                 flash('新密码至少 6 位', 'danger')
-                return render_template('settings.html', **_settings_context())
+                return render_template('settings.html')
             if new != confirm:
                 flash('两次密码不一致', 'danger')
-                return render_template('settings.html', **_settings_context())
+                return render_template('settings.html')
             current_user.password_hash = generate_password_hash(new)
+            current_user.must_change_password = False
 
         db.session.commit()
         flash('设置已保存', 'success')
         return redirect(url_for('settings'))
 
-    return render_template('settings.html', **_settings_context())
-
-
-@app.route('/update', methods=['POST'])
-@login_required
-def update_server():
-    """一键更新：git pull + 优雅等待任务结束后重启服务。"""
-    repo = request.form.get('repo_url', '').strip()
-    import subprocess as _sp
-    output = []
-    try:
-        if repo:
-            r = _sp.run(['git', 'pull', repo, 'master'], cwd=PROJECT_DIR,
-                        capture_output=True, text=True, timeout=180)
-        else:
-            r = _sp.run(['git', 'pull'], cwd=PROJECT_DIR,
-                        capture_output=True, text=True, timeout=180)
-        output.append(r.stdout[-1500:])
-        if r.stderr:
-            output.append(r.stderr[-800:])
-    except Exception as e:
-        output.append(f'git pull 失败: {e}')
-
-    running = (TrainingTask.query.filter_by(status='running').count()
-               + Task.query.filter_by(status='running').count())
-
-    def _do_restart():
-        time.sleep(5)
-        if os.name == 'nt':
-            return  # Windows 无 systemctl，提示手动重启
-        try:
-            _sp.Popen(['systemctl', 'restart', 'ssvc'],
-                      stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-        except Exception:
-            pass
-
-    def _wait_and_restart():
-        while True:
-            with app.app_context():
-                n = (TrainingTask.query.filter_by(status='running').count()
-                     + Task.query.filter_by(status='running').count())
-            if n == 0:
-                break
-            time.sleep(10)
-        _do_restart()
-
-    if running > 0:
-        threading.Thread(target=_wait_and_restart, daemon=True).start()
-        flash(f'更新完成，等待 {running} 个运行中任务结束后自动重启', 'success')
-    else:
-        threading.Thread(target=_do_restart, daemon=True).start()
-        flash('更新完成，5 秒后自动重启服务', 'success')
-    if os.name == 'nt':
-        flash('当前为 Windows 环境，无法自动重启，请手动重启服务', 'warning')
-    flash('git pull 输出：\n' + '\n'.join(output)[-1200:], 'info')
-    return redirect(url_for('settings'))
+    return render_template('settings.html')
 
 
 @app.route('/logout')
@@ -719,12 +539,74 @@ def logout():
 
 # ========== 仪表盘 ==========
 
+def _status_label(status):
+    return {
+        'pending': '排队中',
+        'claimed': '待执行',
+        'running': '运行中',
+        'cancel_requested': '正在停止',
+        'done': '已完成',
+        'failed': '失败',
+        'stopped': '已停止',
+        'expired': '已过期',
+    }.get(status, status)
+
+
+def _queue_position(task):
+    """返回同用户排队任务中该任务前面还有多少个。"""
+    return Task.query.filter(
+        Task.user_id == task.user_id,
+        Task.id < task.id,
+        Task.status.in_(['pending', 'claimed']),
+    ).count()
+
+
 @app.route('/')
 @login_required
 def dashboard():
-    models = Model.query.filter_by(user_id=current_user.id).all()
+    quota = _current_quota(current_user)
+    today = _today_cutoff()
+    running_cnt = Task.query.filter(Task.user_id == current_user.id, Task.status == 'running').count()
+    queued_cnt = Task.query.filter(Task.user_id == current_user.id, Task.status.in_(['pending', 'claimed'])).count()
+    used_today = db.session.query(sa.func.coalesce(sa.func.sum(Task.input_duration), 0)).filter(
+        Task.user_id == current_user.id,
+        Task.created_at >= today,
+        Task.status.in_(['pending', 'claimed', 'running', 'done', 'failed', 'stopped']),
+    ).scalar() or 0
+    done_today = Task.query.filter(
+        Task.user_id == current_user.id, Task.status == 'done', Task.done_at >= today).count()
+    fail_today = Task.query.filter(
+        Task.user_id == current_user.id, Task.status == 'failed', Task.done_at >= today).count()
+    models = _usable_models_for(current_user)
+    private_models = [m for m in models if m.visibility == 'private']
+    official_models = [m for m in models if m.visibility == 'official']
     configs = InferenceConfig.query.filter_by(user_id=current_user.id).all()
-    return render_template('dashboard.html', models=models, configs=configs)
+    recent = (Task.query.filter_by(user_id=current_user.id)
+              .order_by(Task.created_at.desc()).limit(6).all())
+    now = datetime.utcnow()
+    recent_items = []
+    for t in recent:
+        try:
+            model_name = t.config.model.name if t.config and t.config.model else '—'
+        except Exception:
+            model_name = '—'
+        expired = (t.status == 'done' and t.result_expires_at and t.result_expires_at < now)
+        recent_items.append({
+            'id': t.id, 'status': t.status,
+            'status_label': '已过期' if expired else _status_label(t.status),
+            'model': model_name, 'progress_msg': t.progress_msg or '',
+            'created': t.created_at, 'has_result': bool(t.result_filename),
+            'can_download': t.status == 'done' and bool(t.result_filename) and not expired,
+            'can_stop': t.status in ('pending', 'claimed', 'running'),
+        })
+    return render_template('dashboard.html',
+        quota=quota,
+        running_cnt=running_cnt, queued_cnt=queued_cnt,
+        used_today=int(used_today), daily_limit=quota.daily_audio_seconds or 0,
+        done_today=done_today, fail_today=fail_today,
+        models=models, private_cnt=len(private_models), official_cnt=len(official_models),
+        config_cnt=len(configs),
+        recent=recent_items)
 
 
 # ========== 模型管理 ==========
@@ -758,35 +640,10 @@ def _read_model_cfg(cfg_path):
         return {}
 
 
-def _task_arch_from_config(t):
-    """读取训练任务实际使用的架构（任务目录独立 config.json 为权威，params_json 兜底）。
-    返回 (arch, flow_mode, use_unified_flow)。"""
-    src_id = t.resume_from_id or t.id
-    td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{src_id}')
-    arch, flow_mode, unified = 'sovits-v1', 'a2', False
-    try:
-        cfg_p = os.path.join(td, 'config.json')
-        if os.path.exists(cfg_p):
-            with open(cfg_p, 'r', encoding='utf-8') as f:
-                cfg = json.load(f)
-            m = cfg.get('model') or {}
-            arch = m.get('arch', arch)
-            flow_mode = m.get('flow_mode', flow_mode)
-            unified = m.get('use_unified_flow', unified)
-        else:
-            p = json.loads(t.params_json or '{}') or {}
-            arch = p.get('arch', arch)
-            flow_mode = p.get('flow_mode', flow_mode)
-            unified = p.get('use_unified_flow', unified)
-    except Exception:
-        pass
-    return arch, flow_mode, bool(unified)
-
-
 @app.route('/models')
 @login_required
 def model_list():
-    models = Model.query.filter_by(user_id=current_user.id).order_by(Model.created_at.desc()).all()
+    models = _usable_models_for(current_user)
     # 读取每个模型的架构（用于列表筛选）
     model_items = []
     for m in models:
@@ -799,9 +656,12 @@ def model_list():
                 os.path.join(app.config['UPLOAD_FOLDER'], 'models', m.model_path + '.onnx'))
         model_items.append({
             'm': m, 'arch': arch or 'sovits-v1', 'arch_label': label, 'flow_mode': sub,
+            'status': getattr(m, 'status', 'ready'), 'visibility': getattr(m, 'visibility', 'private'),
             'c_kl': (cfg.get('train') or {}).get('c_kl'),
             'tags': [t.strip() for t in (m.tags or '').split(',') if t.strip()],
             'onnx': onnx_exists,
+            'can_manage': can_manage_model(current_user, m),
+            'can_export': can_manage_model(current_user, m),
         })
     return render_template('models_list.html', model_items=model_items)
 
@@ -839,6 +699,19 @@ def model_upload():
             flash('聚类模型文件类型不允许（.pth/.pt）', 'danger')
             return render_template('model_upload.html')
 
+        quota = _current_quota(current_user)
+        if not quota.enabled:
+            flash('当前账号已被禁用，无法上传模型', 'danger')
+            return render_template('model_upload.html')
+        private_cnt = Model.query.filter(
+            Model.user_id == current_user.id,
+            Model.visibility == 'private',
+            Model.status.in_(['pending_review', 'ready']),
+        ).count()
+        if private_cnt >= quota.max_private_models:
+            flash('已达到私有模型数量上限（被拒绝的模型不占名额）', 'danger')
+            return render_template('model_upload.html')
+
         model_path = save_uploaded(model_file, 'models')
         config_path = save_uploaded(config_file, 'configs')
         diff_path = None
@@ -851,9 +724,12 @@ def model_upload():
         if cluster_file and cluster_file.filename:
             cluster_path = save_uploaded(cluster_file, 'models')
 
+        is_official = is_admin(current_user) and request.form.get('visibility') == 'official'
         m = Model(
             user_id=current_user.id,
             name=name,
+            visibility='official' if is_official else 'private',
+            status='ready' if is_official else 'pending_review',
             model_path=model_path,
             config_path=config_path,
             diff_model_path=diff_path,
@@ -862,7 +738,7 @@ def model_upload():
         )
         db.session.add(m)
         db.session.commit()
-        flash('模型上传成功', 'success')
+        flash('模型已上传，等待管理员审核', 'success')
         return redirect(url_for('model_list'))
     return render_template('model_upload.html')
 
@@ -871,7 +747,7 @@ def model_upload():
 @login_required
 def model_edit(model_id):
     m = Model.query.get_or_404(model_id)
-    if m.user_id != current_user.id:
+    if not can_manage_model(current_user, m):
         abort(403)
 
     models_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'models')
@@ -959,12 +835,12 @@ def model_edit(model_id):
 @login_required
 def model_delete(model_id):
     m = Model.query.get_or_404(model_id)
-    if m.user_id != current_user.id:
+    if not can_manage_model(current_user, m):
         abort(403)
     # Delete associated configs
     InferenceConfig.query.filter_by(model_id=m.id).delete()
     # Delete files
-    for attr in ['model_path', 'config_path', 'diff_model_path', 'cluster_path']:
+    for attr in ['model_path', 'config_path', 'diff_model_path', 'diff_config_path', 'cluster_path']:
         path = getattr(m, attr)
         if path:
             full = os.path.join(app.config['UPLOAD_FOLDER'], 'models' if path.endswith(('.pth', '.pt')) else 'configs',
@@ -977,12 +853,50 @@ def model_delete(model_id):
     return redirect(url_for('model_list'))
 
 
+@app.route('/models/<int:model_id>/review', methods=['POST'])
+@login_required
+def model_review(model_id):
+    if not is_admin(current_user):
+        abort(403)
+    m = Model.query.get_or_404(model_id)
+    action = request.form.get('action', '')
+    note = request.form.get('note', '').strip() or None
+    if action == 'approve':
+        m.status = 'ready'
+        m.review_note = note
+        m.reviewed_at = datetime.utcnow()
+        flash(f'模型 #{m.id} 已通过审核', 'success')
+    elif action == 'reject':
+        m.status = 'rejected'
+        m.review_note = note
+        m.reviewed_at = datetime.utcnow()
+        flash(f'模型 #{m.id} 已拒绝', 'warning')
+    elif action == 'disable':
+        m.status = 'disabled'
+        m.review_note = note or m.review_note
+        flash(f'模型 #{m.id} 已下架', 'warning')
+    elif action == 'enable':
+        m.status = 'ready'
+        m.review_note = note or m.review_note
+        flash(f'模型 #{m.id} 已上架', 'success')
+    elif action == 'official':
+        m.status = 'ready'
+        m.visibility = 'official'
+        m.review_note = note or m.review_note
+        m.reviewed_at = datetime.utcnow()
+        flash(f'模型 #{m.id} 已发布为官方模型', 'success')
+    else:
+        abort(400)
+    db.session.commit()
+    return redirect(url_for('admin_models'))
+
+
 @app.route('/models/<int:model_id>/export_onnx', methods=['POST'])
 @login_required
 def model_export_onnx(model_id):
     """导出模型为 ONNX（主生成器），推理时自动用 onnxruntime；失败不影响原推理。"""
     m = db.session.get(Model, model_id)
-    if not m or m.user_id != current_user.id:
+    if not m or not can_manage_model(current_user, m):
         abort(404)
     if not m.model_path or not m.config_path:
         flash('模型缺少模型文件或配置，无法导出', 'danger')
@@ -1009,6 +923,339 @@ def model_export_onnx(model_id):
     return redirect(url_for('model_list'))
 
 
+# ========== 管理员 ==========
+
+def _dir_size_mb(path):
+    total = 0
+    if os.path.isdir(path):
+        for root, _dirs, files in os.walk(path):
+            for f in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+    return total / 1048576
+
+
+@app.route('/admin')
+@login_required
+def admin_index():
+    if not is_admin(current_user):
+        abort(403)
+    today = _today_cutoff()
+    uploads = app.config['UPLOAD_FOLDER']
+    disk = {
+        'models': _dir_size_mb(os.path.join(uploads, 'models')),
+        'configs': _dir_size_mb(os.path.join(uploads, 'configs')),
+        'audio': _dir_size_mb(os.path.join(uploads, 'audio')),
+        'results': _dir_size_mb(os.path.join(uploads, 'results')),
+        'dataset_zips': _dir_size_mb(os.path.join(uploads, 'dataset_zips')),
+        'train_data': _dir_size_mb(os.path.join(uploads, 'train_data')),
+    }
+    running_tasks = []
+    for t in Task.query.filter(Task.status.in_(['claimed', 'running'])).order_by(Task.created_at.asc()).all():
+        try:
+            model_name = t.config.model.name if t.config and t.config.model else '—'
+        except Exception:
+            model_name = '—'
+        running_tasks.append({
+            'id': t.id, 'user': t.user.username if t.user else '?', 'model': model_name,
+            'status': t.status, 'created': t.created_at,
+        })
+    stats = {
+        'users': User.query.count(),
+        'active_users': User.query.filter_by(is_active=True).count(),
+        'pending': Task.query.filter(Task.status == 'pending').count(),
+        'claimed': Task.query.filter(Task.status == 'claimed').count(),
+        'running': Task.query.filter(Task.status == 'running').count(),
+        'done_today': Task.query.filter(Task.status == 'done', Task.done_at >= today).count(),
+        'failed_today': Task.query.filter(Task.status == 'failed', Task.done_at >= today).count(),
+        'pending_models': Model.query.filter(Model.status == 'pending_review').count(),
+        'official_models': Model.query.filter(Model.visibility == 'official').count(),
+        'total_models': Model.query.count(),
+    }
+    return render_template('admin_overview.html', stats=stats, running_tasks=running_tasks, disk=disk)
+
+
+@app.route('/admin/users')
+@login_required
+def admin_users():
+    if not is_admin(current_user):
+        abort(403)
+    users = User.query.order_by(User.id.asc()).all()
+    items = []
+    for u in users:
+        q = _current_quota(u)
+        items.append({
+            'user': u,
+            'quota': q,
+            'queued': Task.query.filter(Task.user_id == u.id, Task.status.in_(['pending', 'claimed', 'running'])).count(),
+            'private_models': Model.query.filter(Model.user_id == u.id, Model.visibility == 'private').count(),
+        })
+    return render_template('admin_users.html', items=items)
+
+
+@app.route('/admin/users/<int:uid>/quota', methods=['POST'])
+@login_required
+def admin_update_quota(uid):
+    if not is_admin(current_user):
+        abort(403)
+    u = db.session.get(User, uid)
+    if not u:
+        abort(404)
+    q = _current_quota(u)
+
+    def _i(k, d):
+        try:
+            return int(request.form.get(k, d) or d)
+        except (ValueError, TypeError):
+            return d
+
+    q.enabled = request.form.get('enabled') == 'on'
+    q.max_queued_tasks = _i('max_queued_tasks', 4)
+    q.max_running_tasks = _i('max_running_tasks', 1)
+    q.max_input_seconds = _i('max_input_seconds', 600)
+    q.daily_audio_seconds = _i('daily_audio_seconds', 3600)
+    q.storage_quota_bytes = _i('storage_quota_bytes', 10 * 1024 ** 3)
+    q.max_model_bytes = _i('max_model_bytes', 4 * 1024 ** 3)
+    q.max_private_models = _i('max_private_models', 3)
+    q.priority = _i('priority', 1)
+    q.results_retention_days = _i('results_retention_days', 7)
+    u.is_active = request.form.get('active') == 'on'
+    u.role = 'admin' if request.form.get('is_admin') == 'on' else 'user'
+    db.session.commit()
+    flash(f'已更新用户 {u.username} 的配额', 'success')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/tasks')
+@login_required
+def admin_tasks():
+    if not is_admin(current_user):
+        abort(403)
+    q = Task.query
+    uid = request.args.get('user_id', type=int)
+    status = request.args.get('status', '').strip()
+    if uid:
+        q = q.filter(Task.user_id == uid)
+    if status:
+        q = q.filter(Task.status == status)
+    tasks = q.order_by(Task.created_at.desc()).limit(200).all()
+    items = []
+    for t in tasks:
+        try:
+            model_name = t.config.model.name if t.config and t.config.model else '—'
+        except Exception:
+            model_name = '—'
+        items.append({
+            't': t,
+            'user': t.user.username if t.user else '?',
+            'model': model_name,
+            'status_label': _status_label(t.status),
+            'can_stop': t.status in ('pending', 'claimed', 'running'),
+        })
+    users = User.query.order_by(User.username.asc()).all()
+    return render_template('admin_tasks.html', items=items, users=users, cur_uid=uid, cur_status=status)
+
+
+@app.route('/admin/tasks/<int:task_id>/stop', methods=['POST'])
+@login_required
+def admin_task_stop(task_id):
+    if not is_admin(current_user):
+        abort(403)
+    t = db.session.get(Task, task_id)
+    if not t:
+        abort(404)
+    if t.status in ('claimed', 'running'):
+        t.status = 'cancel_requested'
+        t.progress_msg = '管理员请求停止'
+        db.session.commit()
+        flash(f'已请求停止任务 #{task_id}', 'warning')
+    elif t.status == 'pending':
+        t.status = 'stopped'
+        t.progress_msg = '管理员停止'
+        t.done_at = datetime.utcnow()
+        db.session.commit()
+        flash(f'已停止任务 #{task_id}', 'warning')
+    else:
+        flash('该任务不在运行/排队中', 'info')
+    return redirect(url_for('admin_tasks'))
+
+
+@app.route('/admin/tasks/<int:task_id>/delete', methods=['POST'])
+@login_required
+def admin_task_delete(task_id):
+    if not is_admin(current_user):
+        abort(403)
+    t = db.session.get(Task, task_id)
+    if not t:
+        abort(404)
+    if t.result_filename:
+        p = os.path.join(app.config['UPLOAD_FOLDER'], 'results', t.result_filename)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    db.session.delete(t)
+    db.session.commit()
+    flash(f'已删除任务 #{task_id}', 'success')
+    return redirect(url_for('admin_tasks'))
+
+
+@app.route('/admin/models')
+@login_required
+def admin_models():
+    if not is_admin(current_user):
+        abort(403)
+    models = Model.query.order_by(Model.created_at.desc()).all()
+    # 待审核置顶，方便审核用户上传的模型
+    models.sort(key=lambda m: (0 if m.status == 'pending_review' else 1))
+    items = []
+    for m in models:
+        cfg = _read_model_cfg(m.config_path)
+        arch = (cfg.get('model') or {}).get('arch', '')
+        label, sub = _arch_label_from_cfg(cfg)
+        items.append({
+            'm': m,
+            'owner': m.owner.username if m.owner else '—',
+            'arch_label': label,
+            'flow_mode': sub,
+            'status': m.status,
+            'visibility': m.visibility,
+        })
+    return render_template('admin_models.html', items=items)
+
+
+@app.route('/admin/storage')
+@login_required
+def admin_storage():
+    if not is_admin(current_user):
+        abort(403)
+    uploads = app.config['UPLOAD_FOLDER']
+    disk = {
+        'models': _dir_size_mb(os.path.join(uploads, 'models')),
+        'configs': _dir_size_mb(os.path.join(uploads, 'configs')),
+        'audio': _dir_size_mb(os.path.join(uploads, 'audio')),
+        'results': _dir_size_mb(os.path.join(uploads, 'results')),
+        'dataset_zips': _dir_size_mb(os.path.join(uploads, 'dataset_zips')),
+        'train_data': _dir_size_mb(os.path.join(uploads, 'train_data')),
+    }
+    total = sum(disk.values())
+    refs_models = set()
+    refs_configs = set()
+    for m in Model.query.all():
+        refs_models |= {m.model_path, m.diff_model_path, m.cluster_path}
+        refs_configs |= {m.config_path, m.diff_config_path}
+    refs_results = {t.result_filename for t in Task.query.all()}
+    refs_audio = {t.audio_filename for t in Task.query.all()}
+
+    def orphans(sub, refs):
+        d = os.path.join(uploads, sub)
+        out = []
+        if os.path.isdir(d):
+            for f in sorted(os.listdir(d)):
+                if os.path.isfile(os.path.join(d, f)) and f not in refs:
+                    out.append(f)
+        return out
+
+    orphan = {
+        'models': orphans('models', refs_models),
+        'configs': orphans('configs', refs_configs),
+        'results': orphans('results', refs_results),
+        'audio': orphans('audio', refs_audio),
+    }
+    return render_template('admin_storage.html', disk=disk, total=total, orphan=orphan)
+
+
+@app.route('/admin/storage/delete', methods=['POST'])
+@login_required
+def admin_storage_delete():
+    if not is_admin(current_user):
+        abort(403)
+    sub = request.form.get('sub', '')
+    name = request.form.get('name', '').strip()
+    if sub not in ('models', 'configs', 'results', 'audio') or not name or os.path.basename(name) != name:
+        flash('非法参数', 'danger')
+        return redirect(url_for('admin_storage'))
+    # 二次校验仍是孤儿，防止误删
+    refs_models = set()
+    refs_configs = set()
+    for m in Model.query.all():
+        refs_models |= {m.model_path, m.diff_model_path, m.cluster_path}
+        refs_configs |= {m.config_path, m.diff_config_path}
+    refs = {
+        'models': refs_models, 'configs': refs_configs,
+        'results': {t.result_filename for t in Task.query.all()},
+        'audio': {t.audio_filename for t in Task.query.all()},
+    }
+    if name in refs.get(sub, set()):
+        flash(f'{name} 已被引用，无法删除', 'danger')
+        return redirect(url_for('admin_storage'))
+    p = os.path.join(app.config['UPLOAD_FOLDER'], sub, name)
+    if os.path.exists(p):
+        try:
+            os.remove(p)
+            flash(f'已删除孤儿文件 {name}', 'success')
+        except OSError as e:
+            flash(f'删除失败: {e}', 'danger')
+    else:
+        flash('文件不存在', 'warning')
+    return redirect(url_for('admin_storage'))
+
+
+@app.route('/admin/settings', methods=['GET', 'POST'])
+@login_required
+def admin_settings():
+    if not is_admin(current_user):
+        abort(403)
+    if request.method == 'POST':
+        if request.form.get('action') == 'test':
+            recipient = current_user.notify_email or current_user.email
+            if not recipient:
+                flash('请先在设置页填写接收邮箱', 'danger')
+                return redirect(url_for('admin_settings'))
+            from notifier import send_via_server
+            ok = send_via_server(recipient, '[SoVITS] SMTP 测试', '服务器 SMTP 配置正常！')
+            flash('测试邮件已发送，请检查收件箱' if ok else '测试发送失败，请检查 SMTP 配置', 'success' if ok else 'danger')
+            return redirect(url_for('admin_settings'))
+        if request.form.get('action') == 'site':
+            _set_setting('allow_registration', '1' if request.form.get('allow_registration') == 'on' else '0')
+            _set_setting('default_max_queued', request.form.get('default_max_queued', '4'))
+            _set_setting('default_max_running', request.form.get('default_max_running', '1'))
+            _set_setting('default_max_input_seconds', request.form.get('default_max_input_seconds', '600'))
+            _set_setting('default_daily_audio_seconds', request.form.get('default_daily_audio_seconds', '3600'))
+            _set_setting('default_max_private_models', request.form.get('default_max_private_models', '3'))
+            _set_setting('default_result_retention_days', request.form.get('default_result_retention_days', '7'))
+            flash('站点设置已保存（对新注册用户生效）', 'success')
+            return redirect(url_for('admin_settings'))
+        _set_setting('smtp_host', request.form.get('smtp_host', '').strip())
+        _set_setting('smtp_port', request.form.get('smtp_port', '465').strip() or '465')
+        _set_setting('smtp_user', request.form.get('smtp_user', '').strip())
+        pwd = request.form.get('smtp_pass', '').strip()
+        if pwd:
+            _set_setting('smtp_pass', pwd)
+        _set_setting('mail_from', request.form.get('mail_from', '').strip())
+        flash('SMTP 配置已保存', 'success')
+        return redirect(url_for('admin_settings'))
+    cfg = {
+        'smtp_host': _get_setting('smtp_host', ''),
+        'smtp_port': _get_setting('smtp_port', '465'),
+        'smtp_user': _get_setting('smtp_user', ''),
+        'mail_from': _get_setting('mail_from', ''),
+    }
+    site = {
+        'allow_registration': _get_setting('allow_registration', os.environ.get('ALLOW_REGISTRATION', '1')) == '1',
+        'default_max_queued': _get_setting('default_max_queued', 4),
+        'default_max_running': _get_setting('default_max_running', 1),
+        'default_max_input_seconds': _get_setting('default_max_input_seconds', 600),
+        'default_daily_audio_seconds': _get_setting('default_daily_audio_seconds', 3600),
+        'default_max_private_models': _get_setting('default_max_private_models', 3),
+        'default_result_retention_days': _get_setting('default_result_retention_days', 7),
+    }
+    return render_template('admin_settings.html', cfg=cfg, site=site)
+
+
 # ========== 推理配置 ==========
 
 @app.route('/configs')
@@ -1022,12 +1269,16 @@ def config_list():
 @app.route('/configs/create', methods=['GET', 'POST'])
 @login_required
 def config_create():
-    models = Model.query.filter_by(user_id=current_user.id).all()
+    models = _usable_models_for(current_user)
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
         model_id = request.form.get('model_id', type=int)
         if not name or not model_id:
             flash('请填写名称并选择模型', 'danger')
+            return render_template('config_create.html', models=models, params=DEFAULT_PARAMS.copy())
+        m = db.session.get(Model, model_id)
+        if not m or not can_use_model(current_user, m):
+            flash('无效或不可用的模型', 'danger')
             return render_template('config_create.html', models=models, params=DEFAULT_PARAMS.copy())
 
         params = {}
@@ -1068,7 +1319,7 @@ def config_edit(config_id):
     c = InferenceConfig.query.get_or_404(config_id)
     if c.user_id != current_user.id:
         abort(403)
-    models = Model.query.filter_by(user_id=current_user.id).all()
+    models = _usable_models_for(current_user)
     if request.method == 'POST':
         c.name = request.form.get('name', c.name).strip()
         model_id = request.form.get('model_id', type=int)
@@ -1123,8 +1374,13 @@ def config_delete(config_id):
 
 task_queue = queue_module.Queue()
 task_worker_started = False
+task_scheduler_started = False
 task_processes = {}  # task_id -> subprocess.Popen
 task_processes_lock = threading.Lock()
+inference_active_id = None
+scheduler_last_user_id = None
+scheduler_lock = threading.Lock()
+cleanup_started = False
 
 # 推理常驻 daemon（LRU 模型缓存）
 inference_q = None
@@ -1173,8 +1429,105 @@ def _update_progress(task, msg, force=False):
         db.session.rollback()
 
 
+_STALE_LEASE_SECONDS = 5 * 60  # 心跳超过 5 分钟未更新视为执行器失联
+
+
+def _recover_expired_leases():
+    """回收执行器失联的任务：claimed/running 且心跳过期 → 重新排队（attempt+1）。仅回收时写库。"""
+    now = datetime.utcnow()
+    candidates = Task.query.filter(Task.status.in_(['claimed', 'running'])).all()
+    changed = False
+    for t in candidates:
+        hb = t.heartbeat_at
+        lease = t.lease_expires_at
+        stale_hb = hb is None or (now - hb).total_seconds() > _STALE_LEASE_SECONDS
+        stale_lease = lease is not None and lease < now
+        if stale_hb or stale_lease:
+            t.status = 'pending'
+            t.claimed_by = None
+            t.lease_expires_at = None
+            t.heartbeat_at = None
+            t.attempt_count = (t.attempt_count or 0) + 1
+            t.progress_msg = '执行器失联，重新排队'
+            changed = True
+    if changed:
+        db.session.commit()
+
+
+def task_scheduler_daemon():
+    """按用户公平轮转从数据库领取待执行推理任务。"""
+    global scheduler_last_user_id
+    with app.app_context():
+        while True:
+            try:
+                _recover_expired_leases()
+                if inference_active_id is not None or not task_queue.empty():
+                    time.sleep(1)
+                    continue
+
+                pending = (Task.query.filter(Task.status == 'pending')
+                           .order_by(Task.created_at.asc(), Task.id.asc()).all())
+                if not pending:
+                    time.sleep(1)
+                    continue
+
+                eligible = []
+                for t in pending:
+                    if not t.user or not is_active_user(t.user):
+                        continue
+                    quota = _current_quota(t.user)
+                    if not quota.enabled:
+                        continue
+                    running = Task.query.filter(Task.user_id == t.user_id, Task.status == 'running').count()
+                    queued = Task.query.filter(Task.user_id == t.user_id, Task.status.in_(['pending', 'claimed', 'running'])).count()
+                    if quota.max_running_tasks and running >= quota.max_running_tasks:
+                        continue
+                    if quota.max_queued_tasks and queued >= quota.max_queued_tasks:
+                        continue
+                    if t.model_id:
+                        model = db.session.get(Model, t.model_id)
+                        if not model or not can_use_model(t.user, model):
+                            t.status = 'failed'
+                            t.error_msg = '模型不可用'
+                            t.progress_msg = '失败: 模型不可用'
+                            t.done_at = datetime.utcnow()
+                            db.session.commit()
+                            continue
+                    eligible.append((t, quota))
+
+                if not eligible:
+                    time.sleep(1)
+                    continue
+
+                picked = None
+                if scheduler_last_user_id is not None:
+                    for t, quota in eligible:
+                        if t.user_id != scheduler_last_user_id:
+                            picked = (t, quota)
+                            break
+                if picked is None:
+                    # 按优先级和等待时间选择
+                    eligible.sort(key=lambda x: (-int(x[1].priority or 1), x[0].created_at, x[0].id))
+                    picked = eligible[0]
+
+                task, quota = picked
+                task.status = 'claimed'
+                task.progress_msg = '等待执行器...'
+                task.lease_expires_at = datetime.utcnow() + timedelta(minutes=10)
+                task.claimed_by = 'scheduler'
+                task.priority_snapshot = quota.priority
+                db.session.commit()
+                scheduler_last_user_id = task.user_id
+                task_queue.put(task.id)
+            except Exception:
+                traceback.print_exc()
+                time.sleep(2)
+
+
+
 def task_worker():
     """后台任务处理线程"""
+    global inference_active_id
     with app.app_context():
         while True:
             task_id = task_queue.get()
@@ -1183,14 +1536,30 @@ def task_worker():
                 continue
             try:
                 # 排队期间被用户停止的任务：跳过不投递
-                if task.status == 'stopped':
+                if task.status in ('stopped', 'cancel_requested'):
+                    if task.status == 'cancel_requested':
+                        task.status = 'stopped'
+                        task.progress_msg = '已停止（排队中取消）'
+                        task.done_at = datetime.utcnow()
+                        db.session.commit()
                     continue
+                inference_active_id = task.id
                 task.status = 'running'
                 task.progress_msg = '正在加载模型...'
+                task.heartbeat_at = datetime.utcnow()
+                task.lease_expires_at = datetime.utcnow() + timedelta(hours=6)
                 db.session.commit()
 
                 cfg_obj = db.session.get(InferenceConfig, task.config_id)
-                model = db.session.get(Model, cfg_obj.model_id)
+                model = db.session.get(Model, cfg_obj.model_id) if cfg_obj else None
+                if not cfg_obj or not model or not is_active_user(task.user) or not can_use_model(task.user, model):
+                    task.status = 'failed'
+                    task.error_msg = '模型不可用'
+                    task.progress_msg = '失败: 模型不可用'
+                    task.done_at = datetime.utcnow()
+                    db.session.commit()
+                    continue
+
                 if task.params_json:
                     params = json.loads(task.params_json)
                 else:
@@ -1249,7 +1618,29 @@ def task_worker():
                 est_total_fixed = estimated_total  # 固定预估总数，不再随实际段数动态扩
                 result_ok = False
                 result_err = None
+                hb_count = 0
                 while True:
+                    hb_count += 1
+                    if hb_count % 30 == 0:
+                        task.heartbeat_at = datetime.utcnow()
+                        try:
+                            db.session.commit()
+                        except Exception:
+                            db.session.rollback()
+                    # 用户/管理员取消：每 5 秒重读状态，中断 daemon 并停止当前任务
+                    if hb_count % 5 == 0:
+                        try:
+                            cur = db.session.get(Task, task_id)
+                        except Exception:
+                            cur = None
+                        if cur and cur.status == 'cancel_requested':
+                            if inference_daemon_proc and inference_daemon_proc.is_alive():
+                                try:
+                                    os.kill(inference_daemon_proc.pid, signal.SIGINT)
+                                except Exception:
+                                    pass
+                            result_err = '用户停止推理'
+                            break
                     segments_done = 0  # 每次轮询重置，重新累计 prog 中当前段数（否则会持续累加虚涨）
                     # 超时保护
                     if task_timeout > 0 and time.time() - started_at > task_timeout:
@@ -1319,6 +1710,7 @@ def task_worker():
                 task.error_msg = f'{type(e).__name__}: {e}'[:200]
                 task.progress_msg = f'失败: {str(e)[:80]}'
             finally:
+                inference_active_id = None
                 try:
                     db.session.commit()
                 except Exception:
@@ -1329,7 +1721,7 @@ def task_worker():
 
 
 def ensure_worker():
-    global task_worker_started, inference_q, inference_done_q, inference_daemon_proc
+    global task_worker_started, task_scheduler_started, inference_q, inference_done_q, inference_daemon_proc, cleanup_started
     if inference_q is None:
         try:
             inference_q = mp_module.Queue()
@@ -1353,9 +1745,17 @@ def ensure_worker():
             print(f'[ensure_worker] 推理 daemon 启动失败: {e}', flush=True)
             import traceback as _tb
             _tb.print_exc()
+    if not task_scheduler_started:
+        task_scheduler_started = True
+        t = threading.Thread(target=task_scheduler_daemon, daemon=True)
+        t.start()
     if not task_worker_started:
         task_worker_started = True
         t = threading.Thread(target=task_worker, daemon=True)
+        t.start()
+    if not cleanup_started:
+        cleanup_started = True
+        t = threading.Thread(target=_cleanup_daemon, daemon=True)
         t.start()
 
 @app.route('/api/tasks/<int:task_id>/status')
@@ -1438,9 +1838,48 @@ def inference():
         cfg_obj = InferenceConfig.query.get_or_404(config_id)
         if cfg_obj.user_id != current_user.id:
             abort(403)
+        model = db.session.get(Model, cfg_obj.model_id)
+        if not model or not can_use_model(current_user, model):
+            flash('所选模型当前不可用', 'danger')
+            return render_template('inference.html', configs=configs)
+
+        quota = _current_quota(current_user)
+        if not quota.enabled:
+            flash('当前账号已被禁用，无法提交推理', 'danger')
+            return render_template('inference.html', configs=configs)
 
         # Save audio
         audio_filename = save_uploaded(audio_file, 'audio')
+        audio_path = os.path.join(app.config['UPLOAD_FOLDER'], 'audio', audio_filename)
+        try:
+            import soundfile as sf
+            audio_info = sf.info(audio_path)
+            audio_duration = float(getattr(audio_info, 'duration', 0) or 0)
+            audio_size = os.path.getsize(audio_path)
+        except Exception:
+            audio_duration = 0
+            audio_size = os.path.getsize(audio_path)
+
+        if quota.max_input_seconds and audio_duration > quota.max_input_seconds:
+            os.remove(audio_path)
+            flash(f'音频时长超过上限（{int(quota.max_input_seconds)} 秒）', 'danger')
+            return render_template('inference.html', configs=configs)
+
+        queued_count = Task.query.filter(Task.user_id == current_user.id, Task.status.in_(['pending', 'running'])).count()
+        if quota.max_queued_tasks and queued_count >= quota.max_queued_tasks:
+            os.remove(audio_path)
+            flash('当前排队/运行任务数已达到上限', 'danger')
+            return render_template('inference.html', configs=configs)
+
+        used_today = db.session.query(sa.func.coalesce(sa.func.sum(Task.input_duration), 0)).filter(
+            Task.user_id == current_user.id,
+            Task.created_at >= _today_cutoff(),
+            Task.status.in_(['pending', 'running', 'done', 'failed', 'stopped']),
+        ).scalar() or 0
+        if quota.daily_audio_seconds and used_today + audio_duration > quota.daily_audio_seconds:
+            os.remove(audio_path)
+            flash('今日可推理音频秒数已用完', 'danger')
+            return render_template('inference.html', configs=configs)
 
         # 合并参数：配置默认值 + 推理页临时覆盖
         try:
@@ -1475,16 +1914,27 @@ def inference():
         task = Task(
             user_id=current_user.id,
             config_id=config_id,
+            model_id=model.id,
             audio_filename=audio_filename,
             params_json=json.dumps(cfg_params, ensure_ascii=False),
             device_pref=current_user.device_pref or 'auto',
             memory_limit=current_user.memory_limit or 0,
+            input_bytes=audio_size,
+            input_duration=audio_duration,
+            priority_snapshot=quota.priority,
+            quota_snapshot_json=json.dumps({
+                'max_queued_tasks': quota.max_queued_tasks,
+                'max_running_tasks': quota.max_running_tasks,
+                'max_input_seconds': quota.max_input_seconds,
+                'daily_audio_seconds': quota.daily_audio_seconds,
+                'results_retention_days': quota.results_retention_days,
+            }, ensure_ascii=False),
+            result_expires_at=datetime.utcnow() + timedelta(days=max(quota.results_retention_days or 7, 1)),
             status='pending',
         )
         db.session.add(task)
         db.session.commit()
 
-        task_queue.put(task.id)
         flash('推理任务已提交，请在任务列表中查看进度', 'success')
         return redirect(url_for('task_list'))
 
@@ -1507,14 +1957,17 @@ def inference():
             'created': t.done_at or t.created_at,
         })
     config_items = []
+    hidden = 0
     for c in configs:
+        if not can_use_model(current_user, c.model):
+            hidden += 1
+            continue
         try:
             c_params = json.loads(c.params_json or '{}')
         except Exception:
             c_params = {}
-        # 读取模型 config 详情（arch / flow_mode / use_unified_flow / 训练参数）
-        m_info = {'arch': '', 'flow_mode': '', 'use_unified_flow': False,
-                  'step': '', 'c_mel': '', 'c_kl': '', 'c_fm': '', 'd_lr_scale': ''}
+        # 读取模型 config 详情（架构 / flow / 步数）
+        m_info = {'arch': '', 'flow_mode': '', 'use_unified_flow': False, 'step': ''}
         if c.model.config_path:
             cfg_p = os.path.join(app.config['UPLOAD_FOLDER'], 'configs', c.model.config_path)
             if os.path.exists(cfg_p):
@@ -1522,14 +1975,9 @@ def inference():
                     with open(cfg_p, 'r', encoding='utf-8') as f:
                         _cfg = json.load(f)
                     _m = _cfg.get('model') or {}
-                    _t = _cfg.get('train') or {}
                     m_info['arch'] = _m.get('arch', '') or 'sovits-v1'
                     m_info['flow_mode'] = _m.get('flow_mode', '') or ('a2' if _m.get('use_unified_flow') else '')
                     m_info['use_unified_flow'] = bool(_m.get('use_unified_flow'))
-                    m_info['c_mel'] = _t.get('c_mel', '')
-                    m_info['c_kl'] = _t.get('c_kl', '')
-                    m_info['c_fm'] = _t.get('c_fm', '')
-                    m_info['d_lr_scale'] = _t.get('d_lr_scale', '')
                 except Exception:
                     pass
         # 从模型名解析 step 数（如 Aris-统一流-A1-G6000 → 6000）
@@ -1542,6 +1990,8 @@ def inference():
                              'params': c_params,
                              'has_cluster': bool(c.model.cluster_path),
                              'model_info': m_info})
+    if hidden:
+        flash(f'{hidden} 个配置因模型不可用已隐藏', 'warning')
     return render_template('inference.html', configs=config_items, recent=recent_items)
 
 
@@ -1549,27 +1999,25 @@ def inference():
 @login_required
 def task_list():
     tasks = Task.query.filter_by(user_id=current_user.id).order_by(Task.created_at.desc()).all()
-    train_tasks = TrainingTask.query.filter_by(user_id=current_user.id).order_by(TrainingTask.created_at.desc()).all()
-    # 可续训：任务自身或链上原始任务的目录里有 G_*/D_* checkpoint，附最新步数
-    resumable_ids = {}
-    for t in train_tasks:
-        src_id = t.resume_from_id or t.id
-        latest = 0
-        if t.model_type == 'diffusion':
-            dd = os.path.join(PROJECT_DIR, 'logs', '44k', 'diffusion', f'task_{src_id}')
-            if os.path.isdir(dd):
-                for f in os.listdir(dd):
-                    if f.startswith('model_') and f.endswith('.pt'):
-                        latest = max(latest, int(''.join(c for c in f if c.isdigit()) or 0))
-        else:
-            td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{src_id}')
-            if os.path.isdir(td):
-                for f in os.listdir(td):
-                    if f.startswith('G_') and f.endswith('.pth'):
-                        latest = max(latest, int(''.join(c for c in f if c.isdigit()) or 0))
-        if latest > 0:
-            resumable_ids[t.id] = latest
-    return render_template('tasks.html', tasks=tasks, train_tasks=train_tasks, resumable_ids=resumable_ids)
+    now = datetime.utcnow()
+    items = []
+    for t in tasks:
+        try:
+            model_name = t.config.model.name if t.config and t.config.model else '—'
+        except Exception:
+            model_name = '—'
+        expired = (t.status == 'done' and t.result_expires_at and t.result_expires_at < now)
+        items.append({
+            't': t,
+            'model': model_name,
+            'status_label': '已过期' if expired else _status_label(t.status),
+            'queue_pos': _queue_position(t) if t.status in ('pending', 'claimed') else 0,
+            'result_expires': t.result_expires_at,
+            'can_download': t.status == 'done' and bool(t.result_filename) and not expired,
+            'can_stop': t.status in ('pending', 'claimed', 'running'),
+            'can_delete': True,
+        })
+    return render_template('tasks.html', tasks=items)
 
 
 @app.route('/tasks/<int:task_id>/result')
@@ -1579,6 +2027,8 @@ def task_result(task_id):
     if task.user_id != current_user.id:
         abort(403)
     if not task.result_filename:
+        abort(404)
+    if task.result_expires_at and task.result_expires_at < datetime.utcnow():
         abort(404)
     path = os.path.join(app.config['UPLOAD_FOLDER'], 'results', task.result_filename)
     if not os.path.exists(path):
@@ -1592,17 +2042,6 @@ def task_delete(task_id):
     task = Task.query.get_or_404(task_id)
     if task.user_id != current_user.id:
         abort(403)
-    # 如果任务正在运行，杀掉子进程
-    with task_processes_lock:
-        proc = task_processes.get(task_id)
-        if task.status == 'running' and proc and proc.poll() is None:
-            proc.kill()
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                pass
-            task_processes.pop(task_id, None)
-    # Delete result file
     if task.result_filename:
         path = os.path.join(app.config['UPLOAD_FOLDER'], 'results', task.result_filename)
         if os.path.exists(path):
@@ -1616,24 +2055,16 @@ def task_delete(task_id):
 @app.route('/tasks/<int:task_id>/stop', methods=['POST'])
 @login_required
 def task_stop(task_id):
-    """停止推理任务：运行中给 daemon 发中断信号（缓存保留），排队中直接标记停止。"""
+    """停止推理任务：排队中直接停；运行中置 cancel_requested，由 worker 统一中断 daemon。"""
     task = db.session.get(Task, task_id)
     if not task or task.user_id != current_user.id:
         abort(404)
     if task.status == 'running':
-        if inference_daemon_proc and inference_daemon_proc.is_alive():
-            try:
-                os.kill(inference_daemon_proc.pid, signal.SIGINT)
-            except Exception:
-                # Windows 或信号不可用时降级：直接结束 daemon（缓存丢失），ensure_worker 会自动重启
-                try:
-                    inference_daemon_proc.terminate()
-                except Exception:
-                    pass
+        task.status = 'cancel_requested'
         task.progress_msg = '正在停止...'
         db.session.commit()
         flash('已请求停止推理任务（当前片段处理完即停）', 'warning')
-    elif task.status == 'pending':
+    elif task.status in ('pending', 'claimed'):
         task.status = 'stopped'
         task.progress_msg = '已停止（未开始）'
         task.done_at = datetime.utcnow()
@@ -1647,1553 +2078,73 @@ def task_stop(task_id):
 @app.route('/results/<filename>')
 @login_required
 def download_result(filename):
-    name = secure_filename(filename)
-    if not name:
-        abort(400)
-    try:
-        path = safe_join(app.config['UPLOAD_FOLDER'], 'results', name)
-    except ValueError:
-        abort(400)
-    if not os.path.exists(path):
+    task = Task.query.filter_by(result_filename=secure_filename(filename), user_id=current_user.id).first()
+    if not task:
         abort(404)
-    return send_file(path, as_attachment=True)
+    return task_result(task.id)
 
-
-# ========== 预训练模型管理（训练底模等） ==========
-
-PRETRAIN_DIR = os.path.join(PROJECT_DIR, 'pretrain')
-PRETRAIN_FILES = [
-    ('g0', 'G_0.pth', 'SoVITS 生成器底模（训练必备，推荐）'),
-    ('d0', 'D_0.pth', 'SoVITS 判别器底模（训练必备，推荐）'),
-    ('rmvpe', 'rmvpe.pt', 'RMVPE F0 预测器（训练/推理选 rmvpe 时使用）'),
-    ('contentvec', 'checkpoint_best_legacy_500.pt', 'ContentVec 编码器（预处理/推理必需）'),
-    ('nsf_model', 'nsf_hifigan/model', 'NSF-HiFiGAN 声码器（推理/扩散必需）'),
-    ('nsf_config', 'nsf_hifigan/config.json', 'NSF-HiFiGAN 配置'),
-    ('hubertsoft', 'hubert-soft-0d54a1f4.pt', 'HuBERTSoft 编码器（选 hubertsoft 时使用）'),
-    ('whisper', 'medium.pt', 'Whisper-PPG 编码器（约 1.5GB）'),
-    ('whisper_large', 'large-v2.pt', 'Whisper-PPG-Large 编码器（约 3GB）'),
-    ('cnhubert', 'chinese-hubert-large-fairseq-ckpt.pt', 'CN-HuBERT-Large 编码器'),
-    ('dphubert', 'DPHuBERT-sp0.75.pth', 'DP-HuBERT 编码器'),
-    ('wavlm', 'WavLM-Base+.pt', 'WavLM Base+ 编码器'),
-]
-
-# 编码器 → 需要的预训练文件（用于训练提交前校验）
-ENCODER_PRETRAIN_FILES = {
-    'vec768l12': 'checkpoint_best_legacy_500.pt',
-    'vec256l9': 'checkpoint_best_legacy_500.pt',
-    'hubertsoft': 'hubert-soft-0d54a1f4.pt',
-    'whisper-ppg': 'medium.pt',
-    'whisper-ppg-large': 'large-v2.pt',
-    'cnhubertlarge': 'chinese-hubert-large-fairseq-ckpt.pt',
-    'dphubert': 'DPHuBERT-sp0.75.pth',
-    'wavlmbase+': 'WavLM-Base+.pt',
-}
-
-
-def _file_size_mb(path):
-    try:
-        return f'{os.path.getsize(path) / 1048576:.1f} MB'
-    except OSError:
-        return None
-
-
-@app.route('/pretrain')
-@login_required
-def pretrain_page():
-    items = []
-    for key, rel, desc in PRETRAIN_FILES:
-        full = os.path.join(PRETRAIN_DIR, rel)
-        size = _file_size_mb(full)
-        items.append({'key': key, 'rel': rel, 'desc': desc, 'exists': size is not None, 'size': size})
-    return render_template('pretrain.html', items=items)
-
-
-@app.route('/pretrain/upload', methods=['POST'])
-@login_required
-def pretrain_upload():
-    """上传训练底模/预训练文件到服务器 pretrain 目录，覆盖已有同名文件。"""
-    targets = {
-        'g0_file': ('G_0.pth', ('.pth', '.pt')),
-        'd0_file': ('D_0.pth', ('.pth', '.pt')),
-        'rmvpe_file': ('rmvpe.pt', ('.pt', '.pth')),
-        'contentvec_file': ('checkpoint_best_legacy_500.pt', ('.pt', '.pth')),
-        'nsf_config_file': ('nsf_hifigan/config.json', ('.json',)),
-        'hubertsoft_file': ('hubert-soft-0d54a1f4.pt', ('.pt', '.pth')),
-        'whisper_file': ('medium.pt', ('.pt', '.pth')),
-        'whisper_large_file': ('large-v2.pt', ('.pt', '.pth')),
-        'cnhubert_file': ('chinese-hubert-large-fairseq-ckpt.pt', ('.pt', '.pth')),
-        'dphubert_file': ('DPHuBERT-sp0.75.pth', ('.pth', '.pt')),
-        'wavlm_file': ('WavLM-Base+.pt', ('.pt', '.pth')),
-    }
-    saved = []
-    for field, (rel, exts) in targets.items():
-        f = request.files.get(field)
-        if not f or not f.filename:
-            continue
-        if not f.filename.lower().endswith(exts):
-            flash(f'{rel} 文件扩展名不允许', 'danger')
-            return redirect(url_for('pretrain_page'))
-        dest = os.path.join(PRETRAIN_DIR, rel)
-        os.makedirs(os.path.dirname(dest) or PRETRAIN_DIR, exist_ok=True)
-        f.save(dest)
-        saved.append(rel)
-
-    nsf = request.files.get('nsf_model_file')
-    if nsf and nsf.filename:
-        dest = os.path.join(PRETRAIN_DIR, 'nsf_hifigan', 'model')
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        nsf.save(dest)
-        saved.append('nsf_hifigan/model')
-
-    if saved:
-        flash('已上传: ' + ', '.join(saved), 'success')
-    else:
-        flash('未选择任何文件', 'warning')
-    return redirect(url_for('pretrain_page'))
-
-
-@app.route('/pretrain/delete', methods=['POST'])
-@login_required
-def pretrain_delete():
-    key = request.form.get('key', '')
-    rel = next((r for k, r, _ in PRETRAIN_FILES if k == key), None)
-    if not rel:
-        flash('无效的文件', 'danger')
-        return redirect(url_for('pretrain_page'))
-    full = os.path.join(PRETRAIN_DIR, rel)
-    if os.path.exists(full):
-        os.remove(full)
-        flash(f'已删除 {rel}', 'success')
-    else:
-        flash('文件不存在', 'warning')
-    return redirect(url_for('pretrain_page'))
-
-
-# ========== 文件管理 ==========
-
-FILE_DIRS = {
-    'models': '模型文件 (.pth/.pt)',
-    'configs': '配置文件 (.json/.yaml)',
-    'results': '推理结果',
-    'dataset_zips': '数据集 zip',
-    'train_data': '训练产物 (checkpoint / 扩散模型)',
-}
-
-
-@app.route('/files')
-@login_required
-def files_page():
-    sections = []
-    for sub, title in FILE_DIRS.items():
-        d = os.path.join(app.config['UPLOAD_FOLDER'], sub)
-        items = []
-        if os.path.isdir(d):
-            if sub == 'train_data':
-                # 列出各任务目录里的模型文件（G_*.pth / D_*.pth / model_*.pt / config.json）
-                for task_dir in sorted(os.listdir(d)):
-                    td = os.path.join(d, task_dir)
-                    if not os.path.isdir(td):
-                        continue
-                    for f in sorted(os.listdir(td)):
-                        if f.endswith(('.pth', '.pt', '.json')):
-                            fp = os.path.join(td, f)
-                            if os.path.isfile(fp):
-                                try:
-                                    size = f'{os.path.getsize(fp) / 1048576:.1f} MB'
-                                    modified = datetime.fromtimestamp(os.path.getmtime(fp)).strftime('%m-%d %H:%M')
-                                except OSError:
-                                    size, modified = '', ''
-                                items.append({'name': f'{task_dir}/{f}', 'size': size, 'modified': modified})
-            else:
-                for f in sorted(os.listdir(d)):
-                    fp = os.path.join(d, f)
-                    if os.path.isfile(fp):
-                        try:
-                            size = f'{os.path.getsize(fp) / 1048576:.1f} MB'
-                            modified = datetime.fromtimestamp(os.path.getmtime(fp)).strftime('%m-%d %H:%M')
-                        except OSError:
-                            size, modified = '', ''
-                        items.append({'name': f, 'size': size, 'modified': modified})
-        sections.append({'key': sub, 'title': title, 'items': items})
-    return render_template('files.html', sections=sections)
-
-
-@app.route('/files/download')
-@login_required
-def file_download():
-    sub = request.args.get('sub', '')
-    name = request.args.get('name', '')
-    if sub not in FILE_DIRS or not name:
-        abort(400)
-    try:
-        path = safe_join(app.config['UPLOAD_FOLDER'], sub, name)
-    except ValueError:
-        abort(400)
-    # 只允许单层文件名，或 train_data 下 task_*/ 子目录（防穿越由 safe_join 保证）
-    rel = os.path.relpath(path, os.path.join(app.config['UPLOAD_FOLDER'], sub))
-    if '..' in rel.split(os.sep) or os.path.isabs(rel):
-        abort(400)
-    if not os.path.exists(path):
-        abort(404)
-    return send_file(path, as_attachment=True)
-
-
-@app.route('/files/delete', methods=['POST'])
-@login_required
-def file_delete():
-    sub = request.form.get('sub', '')
-    name = request.form.get('name', '')
-    if sub not in FILE_DIRS or not name or os.path.basename(name) != name:
-        flash('非法文件', 'danger')
-        return redirect(url_for('files_page'))
-    try:
-        path = safe_join(app.config['UPLOAD_FOLDER'], sub, name)
-    except ValueError:
-        flash('非法路径', 'danger')
-        return redirect(url_for('files_page'))
-    if not os.path.exists(path):
-        flash('文件不存在', 'warning')
-        return redirect(url_for('files_page'))
-    # 引用检查：被模型/训练任务引用的文件不允许直接删除
-    ref = None
-    if sub in ('models', 'configs'):
-        ref = Model.query.filter(sa.or_(
-            Model.model_path == name, Model.config_path == name,
-            Model.diff_model_path == name, Model.diff_config_path == name,
-            Model.cluster_path == name,
-        )).first()
-        if not ref:
-            ref = TrainingTask.query.filter(sa.or_(
-                TrainingTask.model_path == name, TrainingTask.config_path == name,
-                TrainingTask.diff_model_path == name, TrainingTask.diff_config_path == name,
-            )).first()
-    if ref:
-        flash(f'{name} 被模型/任务引用，请用"精确清理"或先解除引用', 'danger')
-        return redirect(url_for('files_page'))
-    os.remove(path)
-    flash(f'已删除 {name}', 'success')
-    return redirect(url_for('files_page'))
-
-
-@app.route('/files/delete_batch', methods=['POST'])
-@login_required
-def file_delete_batch():
-    """批量删除文件（同目录多个文件），引用检查与单删一致。"""
-    sub = request.form.get('sub', '')
-    names = request.form.getlist('names')
-    if sub not in FILE_DIRS or not names:
-        flash('参数错误', 'danger')
-        return redirect(url_for('files_page'))
-    ok, skipped = 0, []
-    for name in names:
-        if not name or os.path.basename(name) != name:
-            skipped.append(name)
-            continue
-        try:
-            path = safe_join(app.config['UPLOAD_FOLDER'], sub, name)
-        except ValueError:
-            skipped.append(name)
-            continue
-        if not os.path.exists(path):
-            skipped.append(name)
-            continue
-        ref = None
-        if sub in ('models', 'configs'):
-            ref = Model.query.filter(sa.or_(
-                Model.model_path == name, Model.config_path == name,
-                Model.diff_model_path == name, Model.diff_config_path == name,
-                Model.cluster_path == name,
-            )).first()
-            if not ref:
-                ref = TrainingTask.query.filter(sa.or_(
-                    TrainingTask.model_path == name, TrainingTask.config_path == name,
-                    TrainingTask.diff_model_path == name, TrainingTask.diff_config_path == name,
-                )).first()
-        if ref:
-            skipped.append(name)
-            continue
-        try:
-            os.remove(path)
-            ok += 1
-        except OSError:
-            skipped.append(name)
-    if ok:
-        flash(f'已批量删除 {ok} 个文件', 'success')
-    if skipped:
-        flash(f'{len(skipped)} 个文件跳过（被引用或不存在）：{", ".join(skipped[:5])}', 'warning')
-    return redirect(url_for('files_page'))
-
-
-# ========== 训练 ==========
-
-train_process = None
-train_active_id = None
-
-
-def train_worker_daemon():
-    global train_process, train_active_id
-    while True:
-        with app.app_context():
-            task = None
-            try:
-                task = TrainingTask.query.filter_by(status='pending').order_by(TrainingTask.created_at).first()
-                if task and train_process is None:
-                    train_active_id = task.id
-                    task.status = 'running'
-                    task.progress_msg = '初始化...'
-                    db.session.commit()
-
-                    from train_worker import run as tr
-                    extra = json.loads(task.params_json or '{}')
-                    root_id = _chain_root_id(task)
-
-                    # 训练墙钟超时（TRAIN_TIMEOUT 秒，0=不限制）：
-                    # 到点由看门狗杀掉训练子进程，worker 会自动保存最新 checkpoint
-                    timeout = int(os.environ.get('TRAIN_TIMEOUT', '0') or 0)
-                    if timeout > 0:
-                        _task_id = task.id
-
-                        def _timeout_watchdog():
-                            time.sleep(timeout)
-                            with app.app_context():
-                                t = db.session.get(TrainingTask, _task_id)
-                                if t and t.status == 'running':
-                                    from train_worker import stop as stop_train
-                                    stop_train()
-                                    t.error_msg = '__TIMEOUT__'
-                                    db.session.commit()
-
-                        threading.Thread(target=_timeout_watchdog, daemon=True).start()
-
-                    # 训练进度邮件报告：每 report_interval 步发一封
-                    _rep_user = task.user
-                    _rep_interval = (_rep_user.report_interval or 0) if _rep_user else 0
-                    if _rep_interval > 0 and _rep_user and _rep_user.email_notify:
-                        _task_id = task.id
-                        _interval = _rep_interval
-
-                        def _progress_reporter():
-                            last = 0
-                            while True:
-                                time.sleep(60)
-                                try:
-                                    with app.app_context():
-                                        t = db.session.get(TrainingTask, _task_id)
-                                        if not t or t.status != 'running':
-                                            break
-                                        info = _parse_training_log(t)
-                                        step = info.get('current_step', 0)
-                                        if step >= _interval and (step // _interval) > (last // _interval):
-                                            last = step
-                                            losses = ''
-                                            ld = info.get('loss_data', [])
-                                            if ld:
-                                                g = ld[-1].get('g')
-                                                d = ld[-1].get('d')
-                                                losses = f'G={g} D={d}'
-                                                fm = ld[-1].get('fm')
-                                                if fm is not None:
-                                                    losses += f' FM={fm}'
-                                            from notifier import notify_train_progress
-                                            notify_train_progress(
-                                                t,
-                                                os.environ.get('SSVC_SERVER_URL', 'http://127.0.0.1:5000'),
-                                                step, t.total_steps or 0,
-                                                losses, info.get('stage', ''), info.get('eta', ''),
-                                            )
-                                except Exception:
-                                    pass
-
-                        threading.Thread(target=_progress_reporter, daemon=True).start()
-
-                    # 训练异常检测：判别器压制 / NaN，发邮件附确认链接
-                    if _rep_user and _rep_user.email_notify:
-                        _task_id2 = task.id
-
-                        def _anomaly_watchdog():
-                            while True:
-                                time.sleep(60)
-                                try:
-                                    with app.app_context():
-                                        t = db.session.get(TrainingTask, _task_id2)
-                                        if not t or t.status != 'running':
-                                            break
-                                        info = _parse_training_log(t)
-                                        ld = info.get('loss_data', [])
-                                        if len(ld) < 10:
-                                            continue
-                                        kind, detail = None, ''
-                                        recent = ld[-20:]
-                                        if any(('g' in x and x['g'] != x['g']) or ('d' in x and x['d'] != x['d'])
-                                               for x in recent):
-                                            kind = 'nan_loss'
-                                            detail = '检测到 NaN Loss，训练可能已经发散'
-                                        else:
-                                            gs = [x.get('g') for x in recent if x.get('g') is not None]
-                                            ds = [x.get('d') for x in recent if x.get('d') is not None]
-                                            if len(gs) >= 10 and len(ds) >= 10:
-                                                g_avg = sum(gs) / len(gs)
-                                                d_avg = sum(ds) / len(ds)
-                                                if d_avg < 0.6 and g_avg > 3.0:
-                                                    kind = 'disc_pressed'
-                                                    detail = f'最近 {len(recent)} 个点：D 均值 {d_avg:.3f}，G 均值 {g_avg:.3f}'
-                                                elif len(ld) >= 40:
-                                                    # 趋势检测：D 持续走低 + G 持续不降 = 判别器持续压制
-                                                    prev = ld[-40:-20]
-                                                    pg = [x.get('g') for x in prev if x.get('g') is not None]
-                                                    pd = [x.get('d') for x in prev if x.get('d') is not None]
-                                                    if len(pg) >= 10 and len(pd) >= 10:
-                                                        prev_g_avg = sum(pg) / len(pg)
-                                                        prev_d_avg = sum(pd) / len(pd)
-                                                        if (d_avg < prev_d_avg * 0.7 and g_avg >= prev_g_avg
-                                                                and g_avg > 3.0):
-                                                            kind = 'disc_pressed'
-                                                            detail = (f'判别器持续压制：D {prev_d_avg:.2f}→{d_avg:.2f}，'
-                                                                      f'G {prev_g_avg:.2f}→{g_avg:.2f}')
-                                        if kind and t.anomaly_state != 'pending':
-                                            token = uuid.uuid4().hex[:32]
-                                            t.anomaly_token = token
-                                            t.anomaly_state = 'pending'
-                                            db.session.commit()
-                                            from notifier import notify_train_anomaly
-                                            notify_train_anomaly(
-                                                t, os.environ.get('SSVC_SERVER_URL', 'http://127.0.0.1:5000'),
-                                                token, kind, detail)
-                                except Exception:
-                                    pass
-
-                        threading.Thread(target=_anomaly_watchdog, daemon=True).start()
-
-                    result = tr(
-                        task_id=task.id,
-                        speaker=task.speaker,
-                        dataset_zip=task.dataset_zip,
-                        log_path=task.log_path or '',
-                        model_type=task.model_type,
-                        batch_size=task.batch_size or 4,
-                        total_steps=task.total_steps or 4200,
-                        keep_ckpts=task.keep_ckpts or 3,
-                        resume_from_id=task.resume_from_id or 0,
-                        diff_root_id=root_id,
-                        **extra,
-                    )
-                    # 用户手动停止时（status=stopped），train_stop 已保存 checkpoint 并注册模型，
-                    # 这里不能再覆盖任务状态
-                    if task.status != 'stopped':
-                        if task.error_msg == '__TIMEOUT__':
-                            task.status = 'failed'
-                            task.progress_msg = '训练超时，已自动停止'
-                            task.error_msg = '训练超过设定时间（TRAIN_TIMEOUT），已自动停止并保存 checkpoint'
-                        else:
-                            task.status = result.get('status', 'failed')
-                            task.progress_msg = result.get('progress_msg', '')
-                            task.error_msg = result.get('error_msg', '')
-                        if result.get('model_path'):
-                            task.model_path = result['model_path']
-                        if result.get('config_path'):
-                            task.config_path = result['config_path']
-                        if result.get('diff_model_path'):
-                            task.diff_model_path = result['diff_model_path']
-                        if result.get('diff_config_path'):
-                            task.diff_config_path = result['diff_config_path']
-                        # 训练正常完成：自动注册到模型列表（主模型任务；扩散模型在任务上可下载）
-                        if task.status == 'done' and task.model_type != 'diffusion' and result.get('model_path'):
-                            try:
-                                _reg = Model(
-                                    user_id=task.user_id,
-                                    name=f'{task.speaker}-{result["model_path"].replace(".pth", "")}step',
-                                    model_path=result['model_path'],
-                                    config_path=result.get('config_path') or '',
-                                    cluster_path=result.get('cluster_path') or None,
-                                )
-                                db.session.add(_reg)
-                            except Exception:
-                                pass
-                        task.done_at = datetime.utcnow()
-                        db.session.commit()
-                        try:
-                            from notifier import notify_train_complete
-                            ip = os.environ.get('SSVC_SERVER_URL', 'http://172.16.77.28:5000')
-                            notify_train_complete(task, ip)
-                        except Exception:
-                            pass
-            except Exception as e:
-                import traceback as _tb
-                _tb.print_exc()
-                if task is not None:
-                    try:
-                        if not (task.status == 'stopped' or
-                                (task.status == 'failed' and task.error_msg == '用户手动停止')):
-                            task.status = 'failed'
-                            task.error_msg = str(e)[:200]
-                            task.progress_msg = '训练异常'
-                        task.done_at = datetime.utcnow()
-                        db.session.commit()
-                    except Exception:
-                        pass
-            finally:
-                train_active_id = None
-                train_process = None
-        time.sleep(5)
-
-
-def ensure_train_worker():
-    if not any(t.name == 'train-daemon' and t.is_alive() for t in threading.enumerate()):
-        t = threading.Thread(target=train_worker_daemon, name='train-daemon', daemon=True)
-        t.start()
-
-
-STAGES = [
-    ('init', '初始化'),
-    ('unzip', '解压'),
-    ('resample', '重采样'),
-    ('config', '生成配置'),
-    ('features', '提取特征'),
-    ('sovits', 'SoVITS 训练'),
-    ('diff_config', '扩散配置'),
-    ('diff_train', '扩散训练'),
-    ('save', '保存模型'),
-]
-
-STAGE_KEYWORDS = {
-    '初始化': 'init', '解压': 'unzip', '重采样': 'resample',
-    '生成配置': 'config', '配置扩散': 'diff_config',
-    '提取特征': 'features', '特征提取': 'features',
-    '开始 SoVITS': 'sovits', '开始扩散': 'diff_train',
-    '保存模型': 'save', '模型已保存': 'save',
-}
-
-
-def detect_stage(log_text, progress_msg):
-    lines = log_text.split('\n')
-    for line in reversed(lines):
-        for kw, stage in STAGE_KEYWORDS.items():
-            if kw in line:
-                return stage
-    for kw, stage in STAGE_KEYWORDS.items():
-        if kw in progress_msg:
-            return stage
-    return 'init'
-
-
-def _format_eta(seconds):
-    if seconds is None or seconds < 0:
-        return '...'
-    seconds = int(seconds)
-    if seconds > 3600:
-        return f'{seconds // 3600}h{(seconds % 3600) // 60}m'
-    if seconds > 60:
-        return f'{seconds // 60}m{seconds % 60}s'
-    return f'{seconds}s'
-
-
-def _parse_step_times(log_content):
-    """从日志提取 [HH:MM:SS] ... step: N 序列（sovits Losses 行与扩散 solver 行都带）。"""
-    pairs = []
-    for line in log_content.split('\n'):
-        m = re.search(r'\[(\d{2}):(\d{2}):(\d{2})\].*step:\s*(\d+)', line)
-        if m:
-            h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
-            pairs.append((h * 3600 + mi * 60 + s, int(m.group(4))))
-    return pairs
-
-
-def _parse_training_log(active):
-    """从训练日志解析进度，页面与 API 共用。"""
-    info = {
-        'stage': 'init',
-        'pct': 0,
-        'current_step': 0,
-        'total_steps': active.total_steps or 0,
-        'diff_epoch': 0,
-        'diff_total_epochs': 0,
-        'loss_data': [],
-        'elapsed': '',
-        'eta': '',
-        'log_tail': '',
-        'eval_mel': None,
-        'eval_step': 0,
-    }
-    if not active or not active.log_path or not os.path.exists(active.log_path):
-        return info
-    try:
-        with open(active.log_path, 'r', encoding='utf-8') as f:
-            # 只读尾部（256KB），避免训练日志变大后每次轮询整读文件
-            f.seek(0, 2)
-            size = f.tell()
-            f.seek(max(0, size - 262144))
-            log_content = f.read()
-    except Exception:
-        log_content = ''
-    info['stage'] = detect_stage(log_content, active.progress_msg or '')
-    diff_extra = ''  # 扩散 solver 日志（log_info.txt），供 diff_train 阶段与 loss 解析使用
-
-    elapsed_secs = 0
-    if active.created_at:
-        elapsed_secs = max(int((datetime.utcnow() - active.created_at).total_seconds()), 0)
-    info['elapsed'] = _format_eta(elapsed_secs)
-
-    if info['stage'] == 'diff_train':
-        diff_cfg_path = os.path.join(PROJECT_DIR, 'configs', 'diffusion.yaml')
-        try:
-            import yaml
-            with open(diff_cfg_path, 'r', encoding='utf-8') as f:
-                dc = yaml.safe_load(f)
-            info['diff_total_epochs'] = int(dc.get('train', {}).get('epochs', 0) or 0)
-            diff_max_steps = int(dc.get('train', {}).get('max_steps', 0) or 0)
-        except Exception:
-            info['diff_total_epochs'] = 0
-            diff_max_steps = 0
-        # 扩散 solver 日志写在 expdir/log_info.txt（train.log 里没有），需要单独读取。
-        # 格式：epoch: 5 | 123/456 | expdir | batch/s: 1.20 | lr: 0.0001 | loss: 1.234 | time: 10s | step: 12345
-        root_id = active.resume_from_id or active.id
-        diff_log = os.path.join(PROJECT_DIR, 'logs', '44k', 'diffusion', f'task_{root_id}', 'log_info.txt')
-        diff_extra = ''
-        if os.path.exists(diff_log):
-            try:
-                with open(diff_log, 'r', encoding='utf-8') as f:
-                    f.seek(0, 2)
-                    size = f.tell()
-                    f.seek(max(0, size - 262144))
-                    diff_extra = f.read()
-            except Exception:
-                diff_extra = ''
-        m = re.search(r'epoch:\s*(\d+)\s*\|\s*(\d+)/(\d+)', diff_extra)
-        if m:
-            info['diff_epoch'] = int(m.group(1))
-            batch_now = int(m.group(2))
-            batch_total = max(int(m.group(3)), 1)
-            sm = re.findall(r'\| step:\s*(\d+)', diff_extra)
-            if sm:
-                info['current_step'] = int(sm[-1])
-            if diff_max_steps > 0:
-                # 用户设了目标步数：按步数算进度/ETA（total = max_steps）
-                info['total_steps'] = diff_max_steps
-                info['pct'] = min(int(info['current_step'] / diff_max_steps * 100), 99)
-                start_step = 0
-                if active.resume_from_id:
-                    dd = os.path.join(PROJECT_DIR, 'logs', '44k', 'diffusion', f'task_{root_id}')
-                    if os.path.isdir(dd):
-                        for f in os.listdir(dd):
-                            if f.startswith('model_') and f.endswith('.pt'):
-                                start_step = max(start_step, int(''.join(c for c in f if c.isdigit()) or 0))
-                progress = info['current_step'] - start_step
-                if progress > 0 and elapsed_secs > 0:
-                    speed = progress / elapsed_secs
-                    info['eta'] = _format_eta(int((diff_max_steps - info['current_step']) / max(speed, 1e-6)))
-            elif info['diff_total_epochs'] > 0:
-                # 用户按 epochs 理解：显示 epoch 进度（不显示步数），ETA 按 epoch 速率估算
-                info['total_steps'] = 0
-                epoch_progress = (info['diff_epoch'] - 1) + batch_now / batch_total
-                info['pct'] = min(int(epoch_progress / info['diff_total_epochs'] * 100 + 0.5), 99)
-                if epoch_progress > 0 and elapsed_secs > 0:
-                    info['eta'] = _format_eta(
-                        int(elapsed_secs * (info['diff_total_epochs'] - epoch_progress) / epoch_progress))
-    else:
-        total_steps = active.total_steps or 0
-        pairs = _parse_step_times(log_content)
-        if pairs:
-            info['current_step'] = min(pairs[-1][1], total_steps) if total_steps else pairs[-1][1]
-            info['total_steps'] = total_steps
-            if total_steps > 0:
-                info['pct'] = min(int(info['current_step'] / total_steps * 100), 99)
-                if info['current_step'] > 0 and elapsed_secs > 0:
-                    # 近期速度：最近两个带时间戳的 step 点，避免全程平均被预处理/排队时间拖低
-                    if len(pairs) >= 2:
-                        t0, s0 = pairs[-2]
-                        t1, s1 = pairs[-1]
-                        if t1 < t0:
-                            t1 += 86400
-                        dt = max(t1 - t0, 1)
-                        ds = s1 - s0
-                        if ds > 0:
-                            speed = ds / dt
-                            info['eta'] = _format_eta(int((total_steps - info['current_step']) / max(speed, 1e-6)))
-        elif info['stage'] == 'features':
-            pcts = re.findall(r'(\d+)%\|', log_content)
-            if pcts:
-                info['pct'] = min(max(int(x) for x in pcts), 99)
-            else:
-                info['pct'] = 15
-        elif info['stage'] == 'resample':
-            info['pct'] = 5
-        elif info['stage'] == 'unzip':
-            info['pct'] = 2
-
-    _cur_epoch = 1  # Train Epoch 行在 Losses 行之前打印，先缓存，供下一条 Losses 条目使用
-    for line in log_content.split('\n') + (diff_extra or '').split('\n'):
-        mep = re.search(r'Train Epoch:\s*(\d+)', line)
-        if mep:
-            _cur_epoch = int(mep.group(1))
-        m = re.search(r'Losses: \[([^\]]+)\]', line)
-        if m:
-            vals = [float(x.strip()) for x in m.group(1).split(',')]
-            if len(vals) >= 2:
-                entry = {'g': round(vals[1], 4), 'd': round(vals[0], 4), 'epoch': _cur_epoch}
-                if len(vals) >= 4:
-                    entry['mel'] = round(vals[3], 4)
-                info['loss_data'].append(entry)
-        # 统一流 FM loss：train.py 在 Losses 行之后单独打印 FlowMatch Loss: 0.xxxxxx
-        # 把 fm 值补到最后一条 loss_data 上，前端据此画第三条曲线
-        mfm = re.search(r'FlowMatch Loss:\s*([\d.eE+-]+)', line)
-        if mfm and info['loss_data']:
-            info['loss_data'][-1]['fm'] = round(float(mfm.group(1)), 4)
-        m3 = re.search(r'\| loss: ([\d.eE+-]+) .*\| step: (\d+)', line)
-        if m3:
-            info['loss_data'].append({'diff': round(float(m3.group(1)), 4)})
-        m2 = re.search(r'Eval Losses: \[([^\]]+)\], step: (\d+)', line)
-        if m2:
-            info['eval_mel'] = round(float(m2.group(1)), 4)
-            info['eval_step'] = int(m2.group(2))
-    info['log_tail'] = log_content[-5000:]
-    return info
-
-
-@app.route('/api/train/<int:tid>/loss_chart.json')
-@login_required
-def api_train_loss_chart(tid):
-    """下载训练任务的完整 loss 曲线数据（JSON），支持任意状态任务。"""
-    task = db.session.get(TrainingTask, tid)
-    if not task or task.user_id != current_user.id:
-        abort(404)
-    info = _parse_training_log(task)
-    payload = {
-        'task_id': tid,
-        'status': task.status,
-        'total_steps': task.total_steps or 0,
-        'loss_data': info.get('loss_data', []),
-        'eval_mel': info.get('eval_mel'),
-        'eval_step': info.get('eval_step', 0),
-    }
-    resp = jsonify(payload)
-    resp.headers['Content-Disposition'] = f'attachment; filename="task_{tid}_loss_chart.json"'
-    return resp
-
-
-@app.route('/api/train/<int:tid>/register_checkpoints', methods=['POST'])
-@login_required
-def api_train_register_checkpoints(tid):
-    """扫描任务链根目录下所有 G_*.pth checkpoint，注册为可直接推理的模型。
-
-    用硬链接（同盘符零拷贝）把 checkpoint 链接到 models/，配置复制到 configs/，
-    挂载该说话人的聚类索引；已在模型列表中的同名 checkpoint 自动跳过。
-    """
-    task = db.session.get(TrainingTask, tid)
-    if not task or task.user_id != current_user.id:
-        abort(404)
-    root_id = _chain_root_id(task)
-    td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{root_id}')
-    if not os.path.isdir(td):
-        return jsonify({'ok': False, 'msg': '任务目录不存在', 'registered': [], 'skipped': 0}), 404
-    # 收集所有 G_*.pth（跳过 G_0 底模）
-    ckpts = []
-    for f in sorted(os.listdir(td)):
-        if f.startswith('G_') and f.endswith('.pth') and f != 'G_0.pth':
-            n = int(''.join(c for c in f if c.isdigit()) or 0)
-            ckpts.append((f, n))
-    if not ckpts:
-        return jsonify({'ok': False, 'msg': '未找到任何 checkpoint（G_*.pth）', 'registered': [], 'skipped': 0})
-    models_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'models')
-    configs_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'configs')
-    os.makedirs(models_dir, exist_ok=True)
-    os.makedirs(configs_dir, exist_ok=True)
-    # 该说话人的聚类索引
-    cluster_name = None
-    _cand = f'{task.speaker}_cluster.pth'
-    if os.path.exists(os.path.join(models_dir, _cand)):
-        cluster_name = _cand
-    # 源 config.json
-    cfg_src = os.path.join(td, 'config.json')
-    registered = []
-    skipped = 0
-    for fname, step in ckpts:
-        cand_name = f'{task.speaker}-G{step}step-task{tid}'
-        if db.session.query(Model.id).filter_by(user_id=current_user.id, name=cand_name).first():
-            skipped += 1
-            continue
-        try:
-            # 硬链接到 models/（同盘符零拷贝；失败则复制）
-            model_name = f'{uuid.uuid4().hex[:8]}_{fname}'
-            dst_model = os.path.join(models_dir, model_name)
-            if os.path.exists(dst_model):
-                os.remove(dst_model)
-            try:
-                os.link(os.path.join(td, fname), dst_model)
-            except OSError:
-                shutil.copy2(os.path.join(td, fname), dst_model)
-            # 复制 config
-            cfg_name = None
-            if os.path.exists(cfg_src):
-                cfg_name = f'{uuid.uuid4().hex[:8]}_config_{fname.replace(".pth", ".json")}'
-                shutil.copy2(cfg_src, os.path.join(configs_dir, cfg_name))
-            m = Model(
-                user_id=current_user.id,
-                name=cand_name,
-                model_path=model_name,
-                config_path=cfg_name or '',
-                cluster_path=cluster_name,
-            )
-            db.session.add(m)
-            registered.append(cand_name)
-        except Exception:
-            # 单个 checkpoint 注册失败不影响其余
-            continue
-    db.session.commit()
-    return jsonify({
-        'ok': True,
-        'msg': f'已注册 {len(registered)} 个 checkpoint' + (f'，跳过 {skipped} 个已存在' if skipped else ''),
-        'registered': registered,
-        'skipped': skipped,
-    })
-
-
-@app.route('/api/train/<int:tid>/status')
-@login_required
-def api_train_status(tid):
-    """返回训练任务实时状态（供任务列表页 AJAX 轮询）。"""
-    task = db.session.get(TrainingTask, tid)
-    if not task or task.user_id != current_user.id:
-        abort(404)
-    if task.status == 'running':
-        info = _parse_training_log(task)
-    else:
-        # 已完成/失败任务也解析日志，前端可展示历史曲线并支持下载
-        info = _parse_training_log(task) if task.log_path and os.path.exists(task.log_path) else {
-            'stage': '', 'pct': 100 if task.status == 'done' else 0,
-            'current_step': 0, 'total_steps': task.total_steps or 0,
-            'diff_epoch': 0, 'diff_total_epochs': 0,
-            'loss_data': [], 'elapsed': '', 'eta': '',
-            'eval_mel': None, 'eval_step': 0,
-        }
-    # log_tail 保留给训练页 fetch 局部更新（每次约 5KB，可接受）
-    stage_label = dict(STAGES).get(info.get('stage', ''), '')
-    return jsonify({'status': task.status, 'progress_msg': task.progress_msg, 'stage_label': stage_label, **info})
-
-
-@app.route('/train')
-@login_required
-def train_page():
-    ensure_train_worker()
-    active = TrainingTask.query.filter_by(status='running').first()
-    info = _parse_training_log(active) if active else {}
-    log_content = info.get('log_tail', '')
-    current_stage = info.get('stage', '')
-    pct = info.get('pct', 0)
-    current_step = info.get('current_step', 0)
-    total_steps = info.get('total_steps', 0)
-    diff_epoch = info.get('diff_epoch', 0)
-    diff_total_epochs = info.get('diff_total_epochs', 0)
-    loss_data = info.get('loss_data', [])
-    elapsed = info.get('elapsed', '')
-    eta = info.get('eta', '')
-    eval_mel = info.get('eval_mel')
-    eval_step = info.get('eval_step', 0)
-    running = TrainingTask.query.filter_by(status='running').count()
-    queued = TrainingTask.query.filter_by(status='pending').count()
-    done_count = TrainingTask.query.filter_by(status='done').count()
-    history = TrainingTask.query.order_by(TrainingTask.created_at.desc()).limit(20).all()
-    # 可续训的任务：已完成/失败且仍有数据目录的
-    history_resumable = []
-    for t in TrainingTask.query.filter(TrainingTask.status.in_(['done', 'failed', 'stopped'])).order_by(TrainingTask.created_at.desc()).limit(10).all():
-        src_id = t.resume_from_id or t.id
-        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{src_id}')
-        latest_step = 0
-        if os.path.isdir(td):
-            for f in os.listdir(td):
-                if f.startswith('G_') and f.endswith('.pth'):
-                    latest_step = max(latest_step, int(''.join(c for c in f if c.isdigit()) or 0))
-        if latest_step > 0:
-            _arch, _flow_mode, _unified = _task_arch_from_config(t)
-            history_resumable.append({
-                'id': t.id, 'speaker': t.speaker, 'model_type': t.model_type, 'step': latest_step,
-                'arch': _arch, 'flow_mode': _flow_mode, 'use_unified_flow': _unified,
-            })
-    # 历史任务附加架构标签（供列表展示）
-    history_arch = {}
-    for t in history:
-        _arch, _flow_mode, _unified = _task_arch_from_config(t)
-        _label, _ = _arch_label_from_cfg({'model': {'arch': _arch, 'flow_mode': _flow_mode, 'use_unified_flow': _unified}})
-        history_arch[t.id] = {'arch': _arch, 'flow_mode': _flow_mode, 'use_unified_flow': _unified, 'label': _label}
-    # 快速恢复快照（停止后一键继续上次训练）
-    qr_meta = None
-    qr_path = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', 'quick_resume', 'meta.json')
-    if os.path.exists(qr_path):
-        try:
-            with open(qr_path, 'r', encoding='utf-8') as f:
-                qr_meta = json.load(f)
-        except Exception:
-            qr_meta = None
-    return render_template('train.html',
-        active=active, log_content=log_content, pct=pct,
-        current_step=current_step, total_steps=total_steps,
-        diff_epoch=diff_epoch, diff_total_epochs=diff_total_epochs,
-        elapsed=elapsed, eta=eta,
-        eval_mel=eval_mel, eval_step=eval_step,
-        loss_data=json.dumps(loss_data[-200:]),
-        stages=STAGES, current_stage=current_stage,
-        stage_index=next((i for i, (k, _) in enumerate(STAGES) if k == current_stage), 0),
-        running=running, queued=queued, done_count=done_count,
-        history=history, history_resumable=history_resumable, history_arch=history_arch,
-        quick_resume=qr_meta,
-        alive=active is not None)
-
-
-@app.route('/train/quick-resume', methods=['POST'])
-@login_required
-def train_quick_resume():
-    """从 TEMP 快照一键恢复上次训练（不弹步数，自动续到原目标或 +5000）。"""
-    qr = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', 'quick_resume')
-    meta_p = os.path.join(qr, 'meta.json')
-    if not os.path.exists(meta_p):
-        flash('没有可快速恢复的训练快照（需要先训练并停止过一次）', 'danger')
-        return redirect(url_for('train_page'))
-    try:
-        with open(meta_p, 'r', encoding='utf-8') as f:
-            meta = json.load(f)
-    except Exception:
-        flash('快速恢复快照损坏，无法恢复', 'danger')
-        return redirect(url_for('train_page'))
-    ckpt_step = meta.get('checkpoint_step') or 0
-    total = max(meta.get('total_steps') or 0, ckpt_step + 5000)
-    log_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{int(time.time())}')
-    os.makedirs(log_dir, exist_ok=True)
-    params = {
-        'arch': meta.get('arch', 'sovits-v1'),
-        'd_lr_scale': meta.get('d_lr_scale', 0.5 if meta.get('arch') in ('rvc', 'rvc-flow') else 1.0),
-        'flow_mode': meta.get('flow_mode', 'a2'),
-        'speech_encoder': meta.get('speech_encoder', 'vec768l12'),
-        'f0_predictor': meta.get('f0_predictor', 'dio'),
-        # 完整透传训练参数（与 write_quick_resume 快照一一对应）
-        'use_unified_flow': meta.get('use_unified_flow', False),
-        'c_fm': meta.get('c_fm', 0.3),
-        'c_kl': meta.get('c_kl', 1.0),
-        'c_mel': meta.get('c_mel', 45),
-        'ema_decay': meta.get('ema_decay', 0.999),
-        'ema_interval': meta.get('ema_interval', 100),
-        'max_speclen': meta.get('max_speclen', 512),
-        'seed': meta.get('seed', 1234),
-        'n_layers_q': meta.get('n_layers_q', 3),
-        'hybrid_steps': meta.get('hybrid_steps', 4),
-        'enc_q_hidden': meta.get('enc_q_hidden', 96),
-        'vol_aug': meta.get('vol_aug', False),
-        'warmup_epochs': meta.get('warmup_epochs', 0),
-        'fp16_run': meta.get('fp16_run'),
-        'learning_rate': meta.get('learning_rate', 0.0001),
-        'segment_size': meta.get('segment_size', 10240),
-        'lr_decay': meta.get('lr_decay', 0.999875),
-        'auto_stop': meta.get('auto_stop', 200),
-        'log_interval': meta.get('log_interval', 200),
-        'eval_interval': meta.get('eval_interval', 800),
-    }
-    task = TrainingTask(
-        user_id=current_user.id,
-        speaker=meta.get('speaker') or 'speaker',
-        dataset_zip=meta.get('dataset_zip') or '',
-        model_type=meta.get('model_type', 'sovits'),
-        batch_size=meta.get('batch_size') or 4,
-        total_steps=total,
-        keep_ckpts=meta.get('keep_ckpts') or 3,
-        params_json=json.dumps(params),
-        log_path=os.path.join(log_dir, 'train.log'),
-        resume_from_id=meta.get('resume_from_id'),
-        status='pending',
-    )
-    db.session.add(task)
-    db.session.commit()
-    flash(f'已快速恢复训练 #{task.id}：{meta.get("speaker")} 从 checkpoint {ckpt_step} 步继续，目标 {total} 步', 'success')
-    return redirect(url_for('task_list'))
-
-
-@app.route('/train/submit', methods=['POST'])
-@login_required
-def train_submit():
-    speaker = request.form.get('speaker', '').strip()
-    if not speaker:
-        flash('请输入说话人名称', 'danger')
-        return redirect(url_for('train_page'))
-
-    # 校验所选编码器对应的预训练模型是否已上传
-    speech_enc = request.form.get('speech_encoder', 'vec768l12')
-    need_file = ENCODER_PRETRAIN_FILES.get(speech_enc)
-    if need_file and not os.path.exists(os.path.join(PRETRAIN_DIR, need_file)):
-        flash(f'编码器 {speech_enc} 需要先上传 {need_file}（请到"预训练"页上传）', 'danger')
-        return redirect(url_for('train_page'))
-
-    dataset_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'dataset_zips')
-    os.makedirs(dataset_dir, exist_ok=True)
-    f = request.files.get('dataset')
-
-    def _int(k, default):
-        try: return int(request.form.get(k, default))
-        except: return default
-    def _flt(k, default):
-        try: return float(request.form.get(k, default))
-        except: return default
-
-    resume_from = _int('resume_from', 0)
-    quick_chain = _int('quick_resume_chain', 0)
-    chain_id = 0
-    resume_latest = 0
-    if resume_from:
-        src = TrainingTask.query.get(resume_from)
-        if not src or src.user_id != current_user.id:
-            flash('续训源任务不存在', 'danger')
-            return redirect(url_for('train_page'))
-        # checkpoint 存在原始任务目录，续训链上的任务要指回原始任务
-        chain_id = src.resume_from_id or src.id
-        dataset_zip = src.dataset_zip
-        # 计算链上最新 checkpoint 步数，避免总步数小于当前步数导致"一提交就结束"
-        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{chain_id}')
-        if os.path.isdir(td):
-            for f in os.listdir(td):
-                if f.startswith('G_') and f.endswith('.pth'):
-                    resume_latest = max(resume_latest, int(''.join(c for c in f if c.isdigit()) or 0))
-        print(f'[train_submit] 续训源: 任务 {resume_from} -> 数据目录 task_{chain_id}', flush=True)
-    elif quick_chain and (not f or not f.filename):
-        # 快速恢复：链任务记录可能已被清理，直接用数据目录续训
-        chain_id = quick_chain
-        dataset_zip = request.form.get('quick_dataset_zip', '').strip()
-        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{chain_id}')
-        if os.path.isdir(td):
-            for ff in os.listdir(td):
-                if ff.startswith('G_') and ff.endswith('.pth'):
-                    resume_latest = max(resume_latest, int(''.join(c for c in ff if c.isdigit()) or 0))
-        print(f'[train_submit] 快速恢复: 数据目录 task_{chain_id}, checkpoint {resume_latest}', flush=True)
-    else:
-        if not f or not f.filename:
-            flash('请上传数据集 zip', 'danger')
-            return redirect(url_for('train_page'))
-        if not f.filename.lower().endswith('.zip'):
-            flash('数据集必须是 zip 文件', 'danger')
-            return redirect(url_for('train_page'))
-        filename = f'_{current_user.id}_{int(time.time())}.zip'
-        path = os.path.join(dataset_dir, filename)
-        f.save(path)
-        dataset_zip = filename
-
-    params = {
-        'arch': request.form.get('arch', 'sovits-v1'),
-        'd_lr_scale': _flt('d_lr_scale', 1.0),
-        'flow_mode': request.form.get('flow_mode', 'a2'),
-        'use_unified_flow': request.form.get('use_unified_flow') == 'on',
-        'c_fm': _flt('c_fm', 0.3),
-        'c_mel': _flt('c_mel', 45),
-        'c_kl': _flt('c_kl', 1.0),
-        'ema_decay': _flt('ema_decay', 0.999),
-        'ema_interval': _int('ema_interval', 100),
-        'max_speclen': _int('max_speclen', 512),
-        'fp16_run': None if request.form.get('fp16_run', 'auto') == 'auto' else (request.form.get('fp16_run') == '1'),
-        'vol_aug': request.form.get('vol_aug') == 'on',
-        'warmup_epochs': _int('warmup_epochs', 0),
-        'seed': _int('seed', 1234),
-        'n_layers_q': _int('n_layers_q', 3),
-        'hybrid_steps': _int('hybrid_steps', 4),
-        'enc_q_hidden': _int('enc_q_hidden', 96),
-        'speech_encoder': request.form.get('speech_encoder', 'vec768l12'),
-        'f0_predictor': request.form.get('f0_predictor', 'dio'),
-        'learning_rate': _flt('learning_rate', 0.0001),
-        'segment_size': _int('segment_size', 10240),
-        'lr_decay': _flt('lr_decay', 0.999875),
-        'auto_stop': _int('auto_stop', 200),
-        'log_interval': _int('log_interval', 200),
-        'eval_interval': _int('eval_interval', 800),
-        'diff_batch_size': _int('diff_batch_size', 8),
-        'diff_epochs': _int('diff_epochs', 100000),
-        'diff_timesteps': _int('diff_timesteps', 1000),
-        'diff_kstep': _int('diff_kstep', 0),
-        'diff_layers': _int('diff_layers', 20),
-        'diff_chans': _int('diff_chans', 256),
-        'diff_hidden': _int('diff_hidden', 128),
-        'diff_lr': _flt('diff_lr', 0.0001),
-        'diff_decay_step': _int('diff_decay_step', 100000),
-        'diff_gamma': _flt('diff_gamma', 0.5),
-        'diff_amp': request.form.get('diff_amp', 'fp32'),
-        'diff_interval_val': _int('diff_interval_val', 200),
-        'diff_max_steps': _int('diff_max_steps', 0),
-    }
-
-    # 续训时继承原任务的架构与训练参数（权威来源：源任务目录的独立 config.json，
-    # 而非表单默认值——select 总有值导致 if not request.form.get() 永不触发）
-    if resume_from or quick_chain:
-        src_cfg_path = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data',
-                                    f'task_{chain_id}', 'config.json')
-        # 记录用户表单原始架构参数，用于防呆对比（config 覆盖时明确提示）
-        _form_flow = params.get('flow_mode')
-        _form_arch = params.get('arch')
-        _form_ckl = params.get('c_kl')
-        if os.path.exists(src_cfg_path):
-            try:
-                with open(src_cfg_path, 'r', encoding='utf-8') as f:
-                    _scfg = json.load(f)
-                _sm = _scfg.get('model', {}) or {}
-                _st = _scfg.get('train', {}) or {}
-                params['arch'] = _sm.get('arch', params.get('arch', 'sovits-v1'))
-                params['d_lr_scale'] = _st.get('d_lr_scale', params.get('d_lr_scale', 1.0))
-                params['flow_mode'] = _sm.get('flow_mode', params.get('flow_mode', 'a2'))
-                params['use_unified_flow'] = _sm.get('use_unified_flow', False)
-                params['c_fm'] = _st.get('c_fm', params.get('c_fm', 0.3))
-                params['c_kl'] = _st.get('c_kl', params.get('c_kl', 1.0))
-                params['c_mel'] = _st.get('c_mel', params.get('c_mel', 45))
-                params['ema_decay'] = _st.get('ema_decay', params.get('ema_decay', 0.999))
-                params['ema_interval'] = _st.get('ema_interval', params.get('ema_interval', 100))
-                params['max_speclen'] = _st.get('max_speclen', params.get('max_speclen', 512))
-                params['seed'] = _st.get('seed', params.get('seed', 1234))
-                params['n_layers_q'] = _sm.get('n_layers_q', params.get('n_layers_q', 3))
-                params['hybrid_steps'] = _sm.get('hybrid_steps', params.get('hybrid_steps', 4))
-                params['enc_q_hidden'] = _sm.get('enc_q_hidden', params.get('enc_q_hidden', 96))
-                params['vol_aug'] = _st.get('vol_aug', params.get('vol_aug', False))
-                params['warmup_epochs'] = _st.get('warmup_epochs', params.get('warmup_epochs', 0))
-                if 'fp16_run' in _st:
-                    params['fp16_run'] = _st['fp16_run']
-                params['learning_rate'] = _st.get('learning_rate', params.get('learning_rate', 0.0001))
-                params['segment_size'] = _st.get('segment_size', params.get('segment_size', 10240))
-                params['lr_decay'] = _st.get('lr_decay', params.get('lr_decay', 0.999875))
-                params['auto_stop'] = _st.get('auto_stop', params.get('auto_stop', 200))
-                params['log_interval'] = _st.get('log_interval', params.get('log_interval', 200))
-                params['eval_interval'] = _st.get('eval_interval', params.get('eval_interval', 800))
-            except Exception:
-                pass
-        # A1（特征先验流）无 enc_q 提供 FM 目标，unified_flow 强制关闭（与 models.py/worker 一致）
-        if params.get('flow_mode') == 'a1':
-            params['use_unified_flow'] = False
-        # ---- 防呆：config 覆盖了用户表单的架构参数时，明确提示实际采用的配置 ----
-        try:
-            _changed = []
-            if _form_flow and _form_flow != params.get('flow_mode'):
-                _changed.append(f'flow_mode {_form_flow}→{params.get("flow_mode")}')
-            if _form_arch and _form_arch != params.get('arch'):
-                _changed.append(f'arch {_form_arch}→{params.get("arch")}')
-            try:
-                if _form_ckl is not None and abs(float(_form_ckl) - float(params.get('c_kl', 1.0))) > 1e-9:
-                    _changed.append(f'c_kl {_form_ckl}→{params.get("c_kl")}')
-            except (TypeError, ValueError):
-                pass
-            if _changed:
-                flash('续训已沿用源任务 config：' + '；'.join(_changed) + '。如需不同架构请新建任务（不要续训）', 'warning')
-        except Exception:
-            pass
-
-    mt = request.form.get('model_type', 'sovits')
-    total_steps = _int('total_steps', 4200)
-    if chain_id and resume_latest > 0 and total_steps <= resume_latest:
-        flash(f'续训目标步数 {total_steps} 必须大于当前 checkpoint 的 {resume_latest} 步，请重新填写', 'danger')
-        return redirect(url_for('train_page'))
-    log_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{int(time.time())}')
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, 'train.log')
-
-    task = TrainingTask(
-        user_id=current_user.id,
-        speaker=speaker,
-        dataset_zip=dataset_zip,
-        model_type=mt,
-        batch_size=_int('batch_size', 4),
-        total_steps=total_steps,
-        keep_ckpts=_int('keep_ckpts', 3),
-        params_json=json.dumps(params),
-        log_path=log_path,
-        resume_from_id=chain_id or None,
-        status='pending',
-    )
-    db.session.add(task)
-    db.session.commit()
-    flash('训练任务已加入队列', 'success')
-    return redirect(url_for('train_page'))
-
-
-@app.route('/train/resume/<int:tid>', methods=['POST'])
-@login_required
-def train_resume(tid):
-    """一键从 checkpoint 续训：复用链上原始任务的数据目录与配置。"""
-    src = db.session.get(TrainingTask, tid)
-    if not src or src.user_id != current_user.id:
-        abort(404)
-    chain_id = src.resume_from_id or src.id
-    latest_step = 0
-    is_diff = src.model_type == 'diffusion'
-    if is_diff:
-        dd = os.path.join(PROJECT_DIR, 'logs', '44k', 'diffusion', f'task_{chain_id}')
-        if os.path.isdir(dd):
-            for f in os.listdir(dd):
-                if f.startswith('model_') and f.endswith('.pt'):
-                    latest_step = max(latest_step, int(''.join(c for c in f if c.isdigit()) or 0))
-    else:
-        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{chain_id}')
-        if os.path.isdir(td):
-            for f in os.listdir(td):
-                if f.startswith('G_') and f.endswith('.pth'):
-                    latest_step = max(latest_step, int(''.join(c for c in f if c.isdigit()) or 0))
-    if latest_step <= 0:
-        flash(f'任务 #{tid} 没有可用 checkpoint，无法续训', 'danger')
-        return redirect(url_for('task_list'))
-
-    try:
-        params = json.loads(src.params_json or '{}')
-    except (json.JSONDecodeError, TypeError):
-        params = {}
-    if is_diff:
-        # 扩散续训：复用扩散配置（epochs 等），总步数对扩散无意义
-        total_steps = src.total_steps or 0
-    else:
-        base = src.total_steps or 4000
-        target_steps = request.form.get('target_steps', type=int) or 0
-        if target_steps > 0:
-            if target_steps <= latest_step:
-                flash(f'续训目标步数 {target_steps} 必须大于当前 checkpoint 的 {latest_step} 步', 'danger')
-                return redirect(url_for('task_list'))
-            total_steps = target_steps
-        else:
-            total_steps = max(base, latest_step + base)
-    log_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{int(time.time())}')
-    os.makedirs(log_dir, exist_ok=True)
-
-    task = TrainingTask(
-        user_id=current_user.id,
-        speaker=src.speaker,
-        dataset_zip=src.dataset_zip,
-        model_type=src.model_type,
-        batch_size=src.batch_size or 4,
-        total_steps=total_steps,
-        keep_ckpts=src.keep_ckpts or 3,
-        params_json=json.dumps(params),
-        log_path=os.path.join(log_dir, 'train.log'),
-        resume_from_id=chain_id,
-        status='pending',
-    )
-    db.session.add(task)
-    db.session.commit()
-    if is_diff:
-        flash(f'已创建扩散续训任务 #{task.id}：从扩散 checkpoint {latest_step} 步继续', 'success')
-    else:
-        flash(f'已创建续训任务 #{task.id}：从 checkpoint {latest_step} 步继续，目标 {total_steps} 步', 'success')
-    return redirect(url_for('task_list'))
-
-
-@app.route('/train/diffusion/<int:tid>', methods=['POST'])
-@login_required
-def train_diffusion(tid):
-    """直接用现有数据/特征进入扩散训练，跳过 SoVITS 主模型训练。"""
-    src = db.session.get(TrainingTask, tid)
-    if not src or src.user_id != current_user.id:
-        abort(404)
-    chain_id = src.resume_from_id or src.id
-    td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{chain_id}')
-    if not os.path.isdir(td) or not any(f.startswith('G_') and f.endswith('.pth') for f in os.listdir(td)):
-        flash('源任务没有 SoVITS checkpoint，请先训练主模型', 'danger')
-        return redirect(url_for('task_list'))
-    try:
-        params = json.loads(src.params_json or '{}')
-    except (json.JSONDecodeError, TypeError):
-        params = {}
-    # 扩散特征提取需要与主模型相同的编码器/F0 配置
-    params.setdefault('speech_encoder', 'vec768l12')
-    params.setdefault('f0_predictor', 'dio')
-    log_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{int(time.time())}')
-    os.makedirs(log_dir, exist_ok=True)
-    task = TrainingTask(
-        user_id=current_user.id,
-        speaker=src.speaker,
-        dataset_zip=src.dataset_zip,
-        model_type='diffusion',
-        batch_size=src.batch_size or 4,
-        total_steps=src.total_steps or 0,
-        keep_ckpts=src.keep_ckpts or 3,
-        params_json=json.dumps(params),
-        log_path=os.path.join(log_dir, 'train.log'),
-        resume_from_id=chain_id,
-        status='pending',
-    )
-    db.session.add(task)
-    db.session.commit()
-    flash(f'已创建扩散训练任务 #{task.id}（复用任务 {chain_id} 的数据与特征，跳过主模型）', 'success')
-    return redirect(url_for('task_list'))
-
-
-@app.route('/train/stop', methods=['POST'])
-@login_required
-def train_stop():
-    from train_worker import stop as stop_train
-    stop_train()
-    task = TrainingTask.query.filter_by(status='running').first()
-    if task:
-        root_id = _chain_root_id(task)
-        chain_id = task.resume_from_id or task.id
-        td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{chain_id}')
-        latest = _latest_g_checkpoint(td) if os.path.isdir(td) else None
-        task.status = 'stopped'
-        task.error_msg = '用户手动停止（checkpoint 已保存）'
-        task.progress_msg = '已停止'
-        task.done_at = datetime.utcnow()
-        # 纯扩散任务停止时只保存扩散模型，不再重复注册 SoVITS 主模型
-        if latest and task.model_type != 'diffusion':
-            try:
-                model_name = f'{uuid.uuid4().hex[:8]}_{latest}'
-                shutil.copy2(os.path.join(td, latest),
-                             os.path.join(app.config['UPLOAD_FOLDER'], 'models', model_name))
-                cfg_name = None
-                cfg_src = os.path.join(td, 'config.json')
-                if os.path.exists(cfg_src):
-                    cfg_name = f'{uuid.uuid4().hex[:8]}_config_{latest.replace(".pth", ".json")}'
-                    shutil.copy2(cfg_src, os.path.join(app.config['UPLOAD_FOLDER'], 'configs', cfg_name))
-                # 自动挂载训练时生成的特征检索索引（{speaker}_cluster.pth）
-                cluster_name = None
-                try:
-                    _cand = f'{task.speaker}_cluster.pth'
-                    if os.path.exists(os.path.join(app.config['UPLOAD_FOLDER'], 'models', _cand)):
-                        cluster_name = _cand
-                except Exception:
-                    pass
-                m = Model(
-                    user_id=current_user.id,
-                    name=f'{task.speaker}-{latest.replace(".pth", "")}step',
-                    model_path=model_name,
-                    config_path=cfg_name,
-                    cluster_path=cluster_name,
-                )
-                db.session.add(m)
-                task.model_path = model_name
-                task.config_path = cfg_name
-            except Exception as e:
-                flash(f'checkpoint 保存失败: {e}', 'danger')
-        # 扩散 checkpoint（扩散任务或 sovits_diff 任务停止时一并保存）
-        diff_dir = os.path.join(PROJECT_DIR, 'logs', '44k', 'diffusion', f'task_{root_id}')
-        diff_latest = None
-        if os.path.isdir(diff_dir):
-            best_n = -1
-            for f in os.listdir(diff_dir):
-                if f.startswith('model_') and f.endswith('.pt'):
-                    n = int(''.join(c for c in f if c.isdigit()) or 0)
-                    if n > best_n:
-                        diff_latest, best_n = f, n
-        if diff_latest:
-            try:
-                diff_name = f'{uuid.uuid4().hex[:8]}_{diff_latest}'
-                shutil.copy2(os.path.join(diff_dir, diff_latest),
-                             os.path.join(app.config['UPLOAD_FOLDER'], 'models', diff_name))
-                diff_cfg_name = None
-                diff_cfg_src = os.path.join(PROJECT_DIR, 'configs', 'diffusion.yaml')
-                if os.path.exists(diff_cfg_src):
-                    diff_cfg_name = f'{uuid.uuid4().hex[:8]}_diff_{diff_latest.replace(".pt", ".yaml")}'
-                    shutil.copy2(diff_cfg_src, os.path.join(app.config['UPLOAD_FOLDER'], 'configs', diff_cfg_name))
-                task.diff_model_path = diff_name
-                task.diff_config_path = diff_cfg_name
-            except Exception as e:
-                flash(f'扩散 checkpoint 保存失败: {e}', 'danger')
-        db.session.commit()
-        step_txt = f'（checkpoint {latest} 步）' if (latest and task.model_type != 'diffusion') else ''
-        diff_txt = '，扩散模型已保存' if diff_latest else ''
-        model_txt = '，已注册到模型列表' if (latest and task.model_type != 'diffusion') else ''
-        flash(f'训练已停止{step_txt}{model_txt}{diff_txt}，可直接推理测试', 'success')
-        # 停止即完成（扩散训练正常流程是手动停止）：发完成邮件
-        try:
-            if task.user and task.user.email_notify:
-                from notifier import notify_train_complete
-                notify_train_complete(task, os.environ.get('SSVC_SERVER_URL', 'http://127.0.0.1:5000'))
-        except Exception:
-            pass
-    train_process = None
-    return redirect(url_for('task_list'))
-
-
-@app.route('/train/result/<int:tid>')
-@login_required
-def train_result(tid):
-    task = TrainingTask.query.get_or_404(tid)
-    if task.user_id != current_user.id:
-        abort(403)
-    is_config = request.args.get('config', '')
-    is_diff = request.args.get('diff', '')
-    if is_config:
-        cf = task.config_path if not is_diff else task.diff_config_path
-        if not cf:
-            abort(404)
-        try:
-            path = safe_join(app.config['UPLOAD_FOLDER'], 'configs', secure_filename(cf))
-        except ValueError:
-            abort(400)
-    else:
-        model = task.diff_model_path if is_diff else task.model_path
-        if not model:
-            abort(404)
-        try:
-            path = safe_join(app.config['UPLOAD_FOLDER'], 'models', secure_filename(model))
-        except ValueError:
-            abort(400)
-    if not os.path.exists(path):
-        abort(404)
-    return send_file(path, as_attachment=True)
-
-
-@app.route('/train/<int:tid>/log')
-@login_required
-def train_log(tid):
-    """下载训练任务日志。"""
-    task = TrainingTask.query.get_or_404(tid)
-    if task.user_id != current_user.id:
-        abort(403)
-    if not task.log_path or not os.path.exists(task.log_path):
-        abort(404)
-    return send_file(task.log_path, as_attachment=True,
-                     download_name=f'train_task_{tid}.log')
-
-
-@app.route('/train/anomaly/<int:tid>/<token>')
-def train_anomaly_confirm(tid, token):
-    """训练异常邮件中的确认链接：continue=继续训练，stop=停止训练。"""
-    task = db.session.get(TrainingTask, tid)
-    if not task or not task.anomaly_token or task.anomaly_token != token:
-        abort(404)
-    action = request.args.get('action', '')
-    if action == 'continue':
-        task.anomaly_state = 'confirmed'
-        db.session.commit()
-        flash(f'已确认继续训练 #{tid}（若再次出现异常会重新提醒）', 'success')
-    elif action == 'stop':
-        from train_worker import stop as stop_train
-        stop_train()
-        task.anomaly_state = 'stopped'
-        db.session.commit()
-        flash(f'已请求停止训练 #{tid}，checkpoint 会自动保存', 'warning')
-    else:
-        abort(400)
-    return redirect(url_for('task_list'))
-
-
-@app.route('/train-tasks/<int:tid>/delete', methods=['POST'])
-@login_required
-def train_task_delete(tid):
-    task = TrainingTask.query.get_or_404(tid)
-    if task.user_id != current_user.id:
-        abort(403)
-    import shutil as _sh
-    td = os.path.join(app.config['UPLOAD_FOLDER'], 'train_data', f'task_{tid}')
-    _sh.rmtree(td, ignore_errors=True)
-    db.session.delete(task)
-    db.session.commit()
-    flash('训练任务已删除', 'success')
-    return redirect(url_for('task_list'))
-
-
-@app.route('/api/model/<int:model_id>/losses')
-@login_required
-def api_model_losses(model_id):
-    """返回模型对应训练任务的 loss 曲线数据。
-    通过比较模型 config 与 logs/task_*/config.json 找到匹配的训练任务，
-    解析 train.log 返回 loss 数据（含 step / g / d / fm / mel / kl / eval）。
-    """
-    m = Model.query.get_or_404(model_id)
-    if m.user_id != current_user.id:
-        abort(403)
-
-    # 读模型 config 关键字段
-    model_cfg = None
-    if m.config_path:
-        cfg_p = os.path.join(app.config['UPLOAD_FOLDER'], 'configs', m.config_path)
-        if os.path.exists(cfg_p):
-            try:
-                with open(cfg_p, 'r', encoding='utf-8') as f:
-                    model_cfg = json.load(f)
-            except Exception:
-                model_cfg = None
-
-    # 扫描 logs/task_*/ 找 config 匹配的训练任务
-    logs_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
-    matched_log = None
-    matched_task = None
-    if os.path.isdir(logs_root):
-        for task_name in os.listdir(logs_root):
-            task_dir = os.path.join(logs_root, task_name)
-            if not os.path.isdir(task_dir):
-                continue
-            task_cfg_path = os.path.join(task_dir, 'config.json')
-            task_log_path = os.path.join(task_dir, 'train.log')
-            if not os.path.exists(task_cfg_path) or not os.path.exists(task_log_path):
-                continue
-            try:
-                with open(task_cfg_path, 'r', encoding='utf-8') as f:
-                    task_cfg = json.load(f)
-            except Exception:
-                continue
-            # 比较关键字段：flow_mode / arch / c_kl / c_mel / c_fm / d_lr_scale
-            if not model_cfg:
-                continue
-            _mm = model_cfg.get('model') or {}
-            _tm = task_cfg.get('model') or {}
-            _mt = model_cfg.get('train') or {}
-            _tt = task_cfg.get('train') or {}
-            keys = ['flow_mode', 'use_unified_flow', 'arch']
-            train_keys = ['c_kl', 'c_mel', 'c_fm', 'd_lr_scale', 'max_steps']
-            if all(_mm.get(k) == _tm.get(k) for k in keys) and \
-               all(str(_mt.get(k)) == str(_tt.get(k)) for k in train_keys):
-                matched_log = task_log_path
-                matched_task = task_name
-                break
-
-    if not matched_log or not os.path.exists(matched_log):
-        return jsonify({'ok': False, 'msg': '未找到匹配的训练日志', 'losses': [], 'evals': []})
-
-    # 解析 train.log
-    losses = []
-    evals = []
-    cur_epoch = 1
-    try:
-        with open(matched_log, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                mep = re.search(r'Train Epoch:\s*(\d+)', line)
-                if mep:
-                    cur_epoch = int(mep.group(1))
-                # Losses: [d, g, fm, mel, kl], step: N
-                mloss = re.search(r'Losses: \[([^\]]+)\].*step: (\d+)', line)
-                if mloss:
-                    vals = [float(x.strip()) for x in mloss.group(1).split(',')]
-                    step = int(mloss.group(2))
-                    entry = {
-                        'step': step,
-                        'epoch': cur_epoch,
-                        'd': round(vals[0], 4) if len(vals) > 0 else None,
-                        'g': round(vals[1], 4) if len(vals) > 1 else None,
-                        'fm': round(vals[2], 4) if len(vals) > 2 else None,
-                        'mel': round(vals[3], 4) if len(vals) > 3 else None,
-                        'kl': round(vals[4], 4) if len(vals) > 4 else None,
-                    }
-                    losses.append(entry)
-                # Eval Losses: [x.xxxx], step: N
-                meval = re.search(r'Eval Losses: \[([^\]]+)\], step: (\d+)', line)
-                if meval:
-                    evals.append({
-                        'step': int(meval.group(2)),
-                        'mel': round(float(meval.group(1)), 4),
-                    })
-    except Exception as e:
-        return jsonify({'ok': False, 'msg': f'解析日志失败: {e}', 'losses': [], 'evals': []})
-
-    # 从模型名解析 step
-    step_match = re.search(r'G(\d+)', m.name or '')
-    cur_step = int(step_match.group(1)) if step_match else 0
-
-    return jsonify({
-        'ok': True,
-        'task': matched_task,
-        'current_step': cur_step,
-        'losses': losses,
-        'evals': evals,
-        'count': len(losses),
-    })
-
-
-# ========== 启动 ==========
 
 def _recover_tasks():
-    """重启后恢复任务队列：running 重置为 pending，pending 重新入队。"""
+    """重启后恢复任务状态：由 scheduler 重新领取，不直接入执行队列。"""
     with app.app_context():
-        for t in Task.query.filter(Task.status.in_(['pending', 'running'])).all():
+        for t in Task.query.filter(Task.status.in_(['pending', 'claimed', 'running'])).all():
             t.status = 'pending'
-        for tr in TrainingTask.query.filter_by(status='running').all():
-            tr.status = 'pending'
-            tr.progress_msg = '服务重启后重新排队'
+            t.claimed_by = None
+            t.lease_expires_at = None
+            t.progress_msg = '服务重启后重新排队'
         db.session.commit()
-        for t in Task.query.filter_by(status='pending').all():
-            task_queue.put(t.id)
+
+
+def _cleanup_daemon():
+    """周期性清理：过期结果文件、历史输入音频。"""
+    with app.app_context():
+        while True:
+            try:
+                time.sleep(3600)
+                now = datetime.utcnow()
+                expired = Task.query.filter(
+                    Task.status == 'done',
+                    Task.result_expires_at.isnot(None),
+                    Task.result_expires_at < now,
+                ).all()
+                for t in expired:
+                    if t.result_filename:
+                        p = os.path.join(app.config['UPLOAD_FOLDER'], 'results', t.result_filename)
+                        if os.path.exists(p):
+                            try:
+                                os.remove(p)
+                            except OSError:
+                                pass
+                        t.result_filename = None
+                    if t.audio_filename:
+                        a = os.path.join(app.config['UPLOAD_FOLDER'], 'audio', t.audio_filename)
+                        if os.path.exists(a):
+                            try:
+                                os.remove(a)
+                            except OSError:
+                                pass
+                    t.result_expires_at = None
+                cutoff = now - timedelta(days=1)
+                old = Task.query.filter(
+                    Task.status.in_(['done', 'failed', 'stopped']),
+                    Task.done_at.isnot(None),
+                    Task.done_at < cutoff,
+                    Task.audio_filename.isnot(None),
+                ).all()
+                for t in old:
+                    a = os.path.join(app.config['UPLOAD_FOLDER'], 'audio', t.audio_filename)
+                    if os.path.exists(a):
+                        try:
+                            os.remove(a)
+                        except OSError:
+                            pass
+                db.session.commit()
+            except Exception:
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+                time.sleep(60)
 
 
 def _stop_inference_daemon():
@@ -3211,7 +2162,6 @@ def _stop_inference_daemon():
 if __name__ == '__main__':
     import atexit
     atexit.register(_stop_inference_daemon)
-    ensure_train_worker()
     ensure_worker()
     _recover_tasks()
     port = int(os.environ.get('PORT', 5000))

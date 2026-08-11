@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>站点设置</h2>
+<div class="row mt-3 g-3">
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h5 class="card-title text-center mb-4">站点配置</h5>
+                <p class="text-secondary small text-center mb-3">新注册用户将应用这里的默认配额。</p>
+                <form method="POST">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="site">
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" name="allow_registration" value="1" class="form-check-input" id="allowReg"
+                               {{ 'checked' if site.allow_registration else '' }}>
+                        <label class="form-check-label" for="allowReg">开放注册</label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">新用户默认排队上限</label>
+                        <input type="number" name="default_max_queued" class="form-control bg-dark text-light border-secondary" value="{{ site.default_max_queued }}" min="0">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">新用户默认运行上限</label>
+                        <input type="number" name="default_max_running" class="form-control bg-dark text-light border-secondary" value="{{ site.default_max_running }}" min="0">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">新用户单音频秒数上限</label>
+                        <input type="number" name="default_max_input_seconds" class="form-control bg-dark text-light border-secondary" value="{{ site.default_max_input_seconds }}" min="0">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">新用户每日音频秒数</label>
+                        <input type="number" name="default_daily_audio_seconds" class="form-control bg-dark text-light border-secondary" value="{{ site.default_daily_audio_seconds }}" min="0">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">新用户私有模型上限</label>
+                        <input type="number" name="default_max_private_models" class="form-control bg-dark text-light border-secondary" value="{{ site.default_max_private_models }}" min="0">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">结果保留天数</label>
+                        <input type="number" name="default_result_retention_days" class="form-control bg-dark text-light border-secondary" value="{{ site.default_result_retention_days }}" min="1">
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">保存站点设置</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h5 class="card-title text-center mb-4">SMTP 配置</h5>
+                <p class="text-secondary small text-center mb-3">配置一次后，所有用户的推理完成/欢迎邮件都从该服务器账号发出。</p>
+                <form method="POST">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label">SMTP 服务器</label>
+                        <input type="text" name="smtp_host" class="form-control bg-dark text-light border-secondary"
+                               value="{{ cfg.smtp_host }}" placeholder="smtp.qq.com">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">SMTP 端口（SSL）</label>
+                        <input type="number" name="smtp_port" class="form-control bg-dark text-light border-secondary"
+                               value="{{ cfg.smtp_port }}" min="1" max="65535">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">SMTP 账户</label>
+                        <input type="text" name="smtp_user" class="form-control bg-dark text-light border-secondary"
+                               value="{{ cfg.smtp_user }}" placeholder="123456@qq.com">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">SMTP 授权码</label>
+                        <input type="password" name="smtp_pass" class="form-control bg-dark text-light border-secondary"
+                               value="" placeholder="留空则保持不变">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">发件人（可留空=用 SMTP 账户）</label>
+                        <input type="text" name="mail_from" class="form-control bg-dark text-light border-secondary"
+                               value="{{ cfg.mail_from }}" placeholder="So-VITS-SVC 推理服务">
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100 mb-2">保存配置</button>
+                    <button type="submit" name="action" value="test" class="btn btn-outline-info w-100">发送测试邮件</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

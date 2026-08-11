@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>管理总览</h2>
+
+<div class="row mt-4 g-2">
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">用户</div>
+                <div class="fs-4">{{ stats.users }}</div>
+                <div class="text-secondary small">启用 {{ stats.active_users }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">排队/运行任务</div>
+                <div class="fs-4">{{ stats.pending + stats.claimed + stats.running }}</div>
+                <div class="text-secondary small">排队 {{ stats.pending }} · 领取 {{ stats.claimed }} · 运行 {{ stats.running }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">今日任务</div>
+                <div class="fs-4">{{ stats.done_today + stats.failed_today }}</div>
+                <div class="text-secondary small">完成 {{ stats.done_today }} · 失败 {{ stats.failed_today }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">模型</div>
+                <div class="fs-4">{{ stats.total_models }}</div>
+                <div class="text-secondary small">官方 {{ stats.official_models }} · 待审核 {{ stats.pending_models }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3 g-2">
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body">
+                <h5 class="card-title">当前运行/领取任务</h5>
+                {% if running_tasks %}
+                <table class="table table-dark table-striped mb-0">
+                    <thead><tr><th>#</th><th>用户</th><th>模型</th><th>状态</th><th>提交时间</th></tr></thead>
+                    <tbody>
+                    {% for t in running_tasks %}
+                    <tr>
+                        <td>#{{ t.id }}</td>
+                        <td>{{ t.user }}</td>
+                        <td>{{ t.model }}</td>
+                        <td>{{ t.status }}</td>
+                        <td>{{ t.created.strftime('%m-%d %H:%M') }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-secondary text-center py-3 mb-0">当前无运行任务</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body">
+                <h5 class="card-title">上传目录磁盘占用</h5>
+                <table class="table table-dark table-striped mb-0">
+                    <tbody>
+                    <tr><td>模型文件</td><td>{{ '%.1f'|format(disk.models) }} MB</td></tr>
+                    <tr><td>配置文件</td><td>{{ '%.1f'|format(disk.configs) }} MB</td></tr>
+                    <tr><td>输入音频</td><td>{{ '%.1f'|format(disk.audio) }} MB</td></tr>
+                    <tr><td>推理结果</td><td>{{ '%.1f'|format(disk.results) }} MB</td></tr>
+                    <tr><td>训练遗留</td><td>{{ '%.1f'|format(disk.dataset_zips + disk.train_data) }} MB</td></tr>
+                    </tbody>
+                </table>
+                <a href="{{ url_for('admin_storage') }}" class="btn btn-sm btn-outline-secondary mt-2">存储与孤儿文件</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

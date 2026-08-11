@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>全局任务队列</h2>
+
+<form method="GET" class="row g-2 mt-2 mb-3">
+    <div class="col-auto">
+        <select name="user_id" class="form-select form-select-sm bg-dark text-light border-secondary">
+            <option value="">全部用户</option>
+            {% for u in users %}
+            <option value="{{ u.id }}" {{ 'selected' if u.id == cur_uid }}>{{ u.username }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <select name="status" class="form-select form-select-sm bg-dark text-light border-secondary">
+            <option value="">全部状态</option>
+            {% for s in ['pending','claimed','running','cancel_requested','done','failed','stopped','expired'] %}
+            <option value="{{ s }}" {{ 'selected' if s == cur_status }}>{{ s }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <button class="btn btn-sm btn-primary">筛选</button>
+    </div>
+</form>
+
+{% if items %}
+<div class="table-responsive">
+    <table class="table table-dark table-striped">
+        <thead>
+            <tr><th>#</th><th>用户</th><th>模型</th><th>状态</th><th>提交时间</th><th>错误/进度</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>#{{ item.t.id }}</td>
+                <td>{{ item.user }}</td>
+                <td>{{ item.model }}</td>
+                <td>{{ item.status_label }}</td>
+                <td>{{ item.t.created_at.strftime('%m-%d %H:%M') }}</td>
+                <td class="text-secondary small">{{ (item.t.error_msg or item.t.progress_msg)[:50] }}</td>
+                <td>
+                    {% if item.can_stop %}
+                    <form method="POST" action="{{ url_for('admin_task_stop', task_id=item.t.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-warning" onclick="return confirm('停止任务 #{{ item.t.id }}？')">停止</button>
+                    </form>
+                    {% endif %}
+                    <form method="POST" action="{{ url_for('admin_task_delete', task_id=item.t.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-danger" onclick="return confirm('删除任务 #{{ item.t.id }}？')">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-secondary text-center py-4">没有匹配的任务</p>
+{% endif %}
+{% endblock %}

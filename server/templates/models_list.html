@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <h2>模型管理</h2>
+    <h2>模型</h2>
     <a href="{{ url_for('model_upload') }}" class="btn btn-primary">上传模型</a>
 </div>
 
 {% if model_items %}
 <div class="row mt-3 g-2">
-    <div class="col-md-4">
-        <input type="text" id="modelSearch" class="form-control bg-dark text-light border-secondary" placeholder="搜索名称 / 文件...">
+    <div class="col-md-6">
+        <input type="text" id="modelSearch" class="form-control bg-dark text-light border-secondary" placeholder="搜索名称...">
     </div>
     <div class="col-md-3">
         <select id="modelArchFilter" class="form-select bg-dark text-light border-secondary">
@@ -19,14 +19,7 @@
             <option value="rvc">RVC 轻量架构</option>
         </select>
     </div>
-    <div class="col-md-3">
-        <select id="modelSort" class="form-select bg-dark text-light border-secondary">
-            <option value="time-desc">时间（新→旧）</option>
-            <option value="time-asc">时间（旧→新）</option>
-            <option value="name-asc">名称（A→Z）</option>
-        </select>
-    </div>
-    <div class="col-md-2 text-secondary small align-self-center" id="modelCount"></div>
+    <div class="col-md-3 text-secondary small align-self-center" id="modelCount"></div>
 </div>
 
 <div class="table-responsive mt-3">
@@ -35,32 +28,23 @@
             <tr>
                 <th>名称</th>
                 <th>架构</th>
-                <th>标签</th>
-                <th>ONNX</th>
-                <th>模型文件</th>
-                <th>扩散</th>
-                <th>聚类</th>
-                <th data-sort="time">上传时间</th>
+                <th>状态</th>
+                <th>上传时间</th>
                 <th>操作</th>
             </tr>
         </thead>
         <tbody>
             {% for item in model_items %}
-            <tr data-name="{{ item.m.name|lower }}" data-file="{{ item.m.model_path|lower }}" data-arch="{{ item.arch }}" data-flow-mode="{{ item.flow_mode }}" data-tags="{{ item.tags|join(',')|lower }}" data-time="{{ item.m.created_at.timestamp() }}">
+            <tr data-name="{{ item.m.name|lower }}" data-arch="{{ item.arch }}" data-flow-mode="{{ item.flow_mode }}" data-time="{{ item.m.created_at.timestamp() }}">
                 <td>{{ item.m.name }}</td>
                 <td><span class="badge {{ 'bg-info' if item.flow_mode == 'a1' else 'bg-secondary' }}">{{ item.arch_label }}</span></td>
                 <td>
-                    {% for tag in item.tags %}
-                    <span class="badge bg-primary me-1">{{ tag }}</span>
-                    {% endfor %}
-                    {% if not item.tags %}<span class="text-secondary">—</span>{% endif %}
+                    <span class="badge {{ 'bg-success' if item.m.status == 'ready' else ('bg-warning text-dark' if item.m.status == 'pending_review' else ('bg-danger' if item.m.status == 'rejected' else 'bg-secondary')) }}">{{ item.m.status }}</span>
+                    <span class="badge {{ 'bg-primary' if item.visibility == 'official' else 'bg-dark' }} ms-1">{{ '官方' if item.visibility == 'official' else '我的' }}</span>
                 </td>
-                <td>{{ '✅' if item.onnx else '—' }}</td>
-                <td><small>{{ item.m.model_path[:30] }}...</small></td>
-                <td>{{ '✅' if item.m.diff_model_path else '—' }}</td>
-                <td>{{ '✅' if item.m.cluster_path else '—' }}</td>
                 <td><small>{{ item.m.created_at.strftime('%m-%d %H:%M') }}</small></td>
                 <td>
+                    {% if item.can_manage %}
                     <a href="{{ url_for('model_edit', model_id=item.m.id) }}" class="btn btn-sm btn-outline-secondary">编辑</a>
                     <form method="POST" action="{{ url_for('model_export_onnx', model_id=item.m.id) }}" style="display:inline">
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
@@ -70,6 +54,9 @@
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('确定删除？')">删除</button>
                     </form>
+                    {% else %}
+                    <span class="text-secondary">只读</span>
+                    {% endif %}
                 </td>
             </tr>
             {% endfor %}
@@ -79,7 +66,7 @@
 {% else %}
 <div class="card bg-dark border-secondary mt-3">
     <div class="card-body text-center py-5">
-        <p class="text-secondary mb-3">还没有上传任何模型</p>
+        <p class="text-secondary mb-3">还没有可用的模型</p>
         <a href="{{ url_for('model_upload') }}" class="btn btn-primary">上传第一个模型</a>
     </div>
 </div>
@@ -92,22 +79,15 @@
     var rows = Array.prototype.slice.call(table.tBodies[0].rows);
     var searchEl = document.getElementById('modelSearch');
     var archEl = document.getElementById('modelArchFilter');
-    var sortEl = document.getElementById('modelSort');
     var countEl = document.getElementById('modelCount');
 
     function render() {
         var q = (searchEl.value || '').toLowerCase();
         var arch = archEl.value;
-        var sort = sortEl.value;
         var visible = rows.filter(function (r) {
-            if (q && r.dataset.name.indexOf(q) === -1 && r.dataset.file.indexOf(q) === -1 && (r.dataset.tags || '').indexOf(q) === -1) return false;
+            if (q && r.dataset.name.indexOf(q) === -1) return false;
             if (arch && r.dataset.flowMode !== arch) return false;
             return true;
-        });
-        visible.sort(function (a, b) {
-            if (sort === 'time-asc') return parseFloat(a.dataset.time) - parseFloat(b.dataset.time);
-            if (sort === 'time-desc') return parseFloat(b.dataset.time) - parseFloat(a.dataset.time);
-            return a.dataset.name.localeCompare(b.dataset.name);
         });
         rows.forEach(function (r) { r.style.display = 'none'; });
         visible.forEach(function (r) { r.style.display = ''; });
@@ -115,7 +95,6 @@
     }
     searchEl.addEventListener('input', render);
     archEl.addEventListener('change', render);
-    sortEl.addEventListener('change', render);
     render();
 })();
 </script>

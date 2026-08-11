@@ -56,11 +56,9 @@
             </div>
             {% endif %}
 
+            <details class="mt-3">
+                <summary class="text-secondary mb-2">⚙ 高级参数（可选，默认即可）</summary>
             <hr class="border-secondary">
-            <h5>推理参数</h5>
-            <div class="row mt-3">
-
-            </div>
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label class="form-label">F0 预测器</label>
@@ -88,7 +86,7 @@
                     <label class="form-label">聚类比例</label>
                     <input type="number" name="cluster_ratio" class="form-control bg-dark text-light border-secondary"
                            value="{{ params.get('cluster_ratio', 0) }}" min="0" max="1" step="0.1">
-                    <small class="text-secondary" id="clusterHint">需要模型挂载检索索引（训练完成自动生成）</small>
+                    <small class="text-secondary" id="clusterHint">模型自带检索索引时生效</small>
                 </div>
                 <div class="col-md-3 mb-3">
                     <label class="form-label">切片阈值 (dB)</label>
@@ -147,6 +145,7 @@
                     <small class="text-secondary">仅方案3统一流模型生效；非统一流模型固定走 nf</small>
                 </div>
             </div>
+            </details>
             <button type="submit" class="btn btn-primary">{{ '保存' if config else '创建' }}</button>
             <a href="{{ url_for('config_list') }}" class="btn btn-secondary">返回</a>
         </form>

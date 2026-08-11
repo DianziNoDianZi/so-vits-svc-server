@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>模型管理</h2>
+<div class="d-flex justify-content-end mt-2">
+    <a href="{{ url_for('model_upload') }}" class="btn btn-primary">上传官方模型</a>
+</div>
+
+{% if items %}
+<div class="table-responsive mt-3">
+    <table class="table table-dark table-striped">
+        <thead>
+            <tr><th>ID</th><th>名称</th><th>属主</th><th>架构</th><th>可见性</th><th>状态</th><th>上传时间</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>#{{ item.m.id }}</td>
+                <td>{{ item.m.name }}</td>
+                <td>{{ item.owner }}</td>
+                <td>{{ item.arch_label }}</td>
+                <td>{{ item.visibility }}</td>
+                <td>{{ item.status }}</td>
+                <td>{{ item.m.created_at.strftime('%m-%d %H:%M') }}</td>
+                <td>
+                    {% if item.status == 'pending_review' %}
+                    <form method="POST" action="{{ url_for('model_review', model_id=item.m.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="approve">
+                        <button class="btn btn-sm btn-outline-success" onclick="return confirm('通过审核 #{{ item.m.id }}？')">通过</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('model_review', model_id=item.m.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="reject">
+                        <button class="btn btn-sm btn-outline-warning" onclick="return confirm('拒绝 #{{ item.m.id }}？')">拒绝</button>
+                    </form>
+                    {% endif %}
+                    {% if item.status == 'ready' and item.visibility == 'official' %}
+                    <form method="POST" action="{{ url_for('model_review', model_id=item.m.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="disable">
+                        <button class="btn btn-sm btn-outline-secondary" onclick="return confirm('下架官方模型 #{{ item.m.id }}？')">下架</button>
+                    </form>
+                    {% endif %}
+                    {% if item.status == 'disabled' %}
+                    <form method="POST" action="{{ url_for('model_review', model_id=item.m.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="enable">
+                        <button class="btn btn-sm btn-outline-success" onclick="return confirm('上架 #{{ item.m.id }}？')">上架</button>
+                    </form>
+                    {% endif %}
+                    {% if item.status == 'ready' and item.visibility == 'private' %}
+                    <form method="POST" action="{{ url_for('model_review', model_id=item.m.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="official">
+                        <button class="btn btn-sm btn-outline-primary" onclick="return confirm('将 #{{ item.m.id }} 发布为官方模型？')">转官方</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-secondary text-center py-4">还没有模型</p>
+{% endif %}
+{% endblock %}

@@ -9,10 +9,16 @@
                 <label class="form-label">模型名称 <small class="text-secondary">（自定义，方便识别）</small></label>
                 <input type="text" name="name" class="form-control bg-dark text-light border-secondary" required>
             </div>
+            {% if current_user.role == 'admin' %}
+            <div class="mb-3 form-check">
+                <input type="checkbox" name="visibility" value="official" class="form-check-input" id="officialCb" {{ 'checked' if current_user.role == 'admin' else '' }}>
+                <label class="form-check-label" for="officialCb">作为官方模型发布</label>
+            </div>
+            {% endif %}
             <div class="mb-3">
                 <label class="form-label">模型文件 <span class="text-danger">*</span></label>
                 <input type="file" name="model_file" class="form-control bg-dark text-light border-secondary" accept=".pth,.pt" required>
-                <small class="text-secondary">G_*.pth 或 G_*.pt 文件（~200~600MB）</small>
+                <small class="text-secondary">G_*.pth 或 G_*.pt 文件</small>
             </div>
             <div class="mb-3">
                 <label class="form-label">配置文件 <span class="text-danger">*</span></label>
@@ -20,19 +26,16 @@
                 <small class="text-secondary">config.json 文件</small>
             </div>
             <div class="mb-3">
-                <label class="form-label">扩散模型 <small class="text-secondary">（可选，浅扩散修音质）</small></label>
+                <label class="form-label">扩散模型 <small class="text-secondary">（可选）</small></label>
                 <input type="file" name="diff_file" class="form-control bg-dark text-light border-secondary" accept=".pth,.pt">
-                <small class="text-secondary">model_*.pt 文件（~220MB）</small>
             </div>
             <div class="mb-3">
-                <label class="form-label">扩散配置文件 <small class="text-secondary">（上传扩散模型时必填）</small></label>
+                <label class="form-label">扩散配置文件</label>
                 <input type="file" name="diff_config_file" class="form-control bg-dark text-light border-secondary" accept=".yaml,.yml">
-                <small class="text-secondary">diffusion.yaml 文件</small>
             </div>
             <div class="mb-3">
-                <label class="form-label">聚类模型 <small class="text-secondary">（可选，提升音色相似度）</small></label>
+                <label class="form-label">聚类模型 <small class="text-secondary">（可选）</small></label>
                 <input type="file" name="cluster_file" class="form-control bg-dark text-light border-secondary" accept=".pth,.pt">
-                <small class="text-secondary">kmeans_*.pt 文件（~30MB）</small>
             </div>
             <button type="submit" class="btn btn-primary">上传</button>
             <a href="{{ url_for('model_list') }}" class="btn btn-secondary">取消</a>

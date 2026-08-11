@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>用户与资源配额</h2>
+<div class="table-responsive mt-3">
+    <table class="table table-dark table-striped">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>用户名</th>
+                <th>角色</th>
+                <th>启用</th>
+                <th>排队/运行</th>
+                <th>私有模型</th>
+                <th>最大排队</th>
+                <th>最大运行</th>
+                <th>单音频秒数</th>
+                <th>每日音频秒数</th>
+                <th>最大私有模型</th>
+                <th>结果保留(天)</th>
+                <th>优先级</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <form method="POST" action="{{ url_for('admin_update_quota', uid=item.user.id) }}">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <td>{{ item.user.id }}</td>
+                    <td>{{ item.user.username }}</td>
+                    <td>
+                        <select name="is_admin" class="form-select form-select-sm bg-dark text-light border-secondary">
+                            <option value="0" {{ 'selected' if item.user.role != 'admin' }}>user</option>
+                            <option value="1" {{ 'selected' if item.user.role == 'admin' }}>admin</option>
+                        </select>
+                    </td>
+                    <td>
+                        <div class="form-check">
+                            <input type="checkbox" name="active" class="form-check-input" id="active-{{ item.user.id }}" {{ 'checked' if item.user.is_active else '' }}>
+                        </div>
+                    </td>
+                    <td>{{ item.queued }}</td>
+                    <td>{{ item.private_models }}</td>
+                    <td><input type="number" name="max_queued_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_queued_tasks }}" min="0"></td>
+                    <td><input type="number" name="max_running_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_running_tasks }}" min="0"></td>
+                    <td><input type="number" name="max_input_seconds" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_input_seconds }}" min="0"></td>
+                    <td><input type="number" name="daily_audio_seconds" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.daily_audio_seconds }}" min="0"></td>
+                    <td><input type="number" name="max_private_models" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_private_models }}" min="0"></td>
+                    <td><input type="number" name="results_retention_days" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.results_retention_days }}" min="1"></td>
+                    <td><input type="number" name="priority" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.priority }}" min="0"></td>
+                    <td>
+                        <label class="form-check small text-secondary"><input type="checkbox" name="enabled" class="form-check-input" {{ 'checked' if item.quota.enabled else '' }}> 可提交</label>
+                        <button type="submit" class="btn btn-sm btn-primary">保存</button>
+                    </td>
+                </form>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

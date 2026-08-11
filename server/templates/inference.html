@@ -80,180 +80,6 @@ function fillParams(select) {
     document.getElementById('mi-flow').textContent = flowLabel;
     document.getElementById('mi-step').textContent = mi.step ? ('Step ' + mi.step) : 'Step ?';
     document.getElementById('mi-unified').style.display = mi.use_unified_flow ? '' : 'none';
-    var trainParts = [];
-    if (mi.c_mel) trainParts.push('c_mel=' + mi.c_mel);
-    if (mi.c_kl) trainParts.push('c_kl=' + mi.c_kl);
-    if (mi.c_fm) trainParts.push('c_fm=' + mi.c_fm);
-    if (mi.d_lr_scale) trainParts.push('d_lr=' + mi.d_lr_scale);
-    document.getElementById('mi-train').textContent = trainParts.length ? '训练: ' + trainParts.join(' · ') : '';
-
-    // 加载该模型的训练 loss 曲线
-    var modelId = opt.getAttribute('data-model-id');
-    if (modelId) {
-        loadModelLosses(modelId, mi.step);
-    } else {
-        var lossPanel = document.getElementById('modelLossPanel');
-        if (lossPanel) lossPanel.style.display = 'none';
-    }
-}
-
-/* ====== 训练 Loss 曲线加载与渲染 ====== */
-function loadModelLosses(modelId, currentStep) {
-    var panel = document.getElementById('modelLossPanel');
-    var metaEl = document.getElementById('infLossMeta');
-    if (metaEl) metaEl.textContent = '加载训练 loss...';
-    if (panel) panel.style.display = 'block';
-    fetch('/api/model/' + modelId + '/losses')
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-            if (!data.ok) {
-                if (metaEl) metaEl.textContent = data.msg || '无法加载训练 loss';
-                destroyLossCharts();
-                return;
-            }
-            renderLossCharts(data.losses || [], data.evals || [], data.current_step || currentStep || 0, data.task);
-        })
-        .catch(function (e) {
-            if (metaEl) metaEl.textContent = '加载失败: ' + e;
-            destroyLossCharts();
-        });
-}
-
-function destroyLossCharts() {
-    if (window.infLossChartInst) { try { window.infLossChartInst.destroy(); } catch (e) {} window.infLossChartInst = null; }
-    if (window.infMelChartInst) { try { window.infMelChartInst.destroy(); } catch (e) {} window.infMelChartInst = null; }
-}
-
-function renderLossCharts(losses, evals, currentStep, taskName) {
-    if (typeof Chart === 'undefined') return;
-    var panel = document.getElementById('modelLossPanel');
-    var metaEl = document.getElementById('infLossMeta');
-    if (!panel) return;
-
-    if (!losses.length) {
-        if (metaEl) metaEl.textContent = '该模型未找到训练 loss 记录';
-        destroyLossCharts();
-        return;
-    }
-    panel.style.display = 'block';
-
-    var labels = losses.map(function (d) { return d.step; });
-    var hasFm = losses.some(function (d) { return d.fm !== undefined && d.fm !== null; });
-    var hasKl = losses.some(function (d) { return d.kl !== undefined && d.kl !== null; });
-    var hasMel = losses.some(function (d) { return d.mel !== undefined && d.mel !== null; });
-
-    var zoomOk = (typeof ChartZoom !== 'undefined');
-    function buildZoomCfg() {
-        if (!zoomOk) return {};
-        return {zoom: {
-            pan: {enabled: true, mode: 'xy', threshold: 3},
-            zoom: {wheel: {enabled: true, speed: 0.1}, pinch: {enabled: true}, drag: {enabled: false}, mode: 'xy'},
-            limits: {x: {min: 'original', max: 'original'}, y: {min: 'original', max: 'original'}}
-        }};
-    }
-    var commonOpts = {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        events: ['click', 'mousedown', 'mouseup', 'wheel', 'touchstart', 'touchmove'],
-        plugins: Object.assign({legend: {labels: {color: '#adb5bd', font: {size: 10}}}, tooltip: {enabled: false}}, buildZoomCfg()),
-        scales: {
-            x: {ticks: {color: '#6c757d', font: {size: 8}, maxTicksLimit: 12}, grid: {color: '#343a40'}, title: {display: true, text: 'step', color: '#6c757d', font: {size: 9}}},
-            y: {ticks: {color: '#6c757d', font: {size: 9}}, grid: {color: '#495057'}}
-        }
-    };
-
-    // 主图：G / D / FM / KL
-    var mainCanvas = document.getElementById('infLossChart');
-    if (mainCanvas) {
-        if (window.infLossChartInst) { try { window.infLossChartInst.destroy(); } catch (e) {} }
-        var mainDatasets = [
-            {label: 'G Loss', data: losses.map(function (d) { return d.g !== undefined ? d.g : null; }), borderColor: '#0d6efd', borderWidth: 1, pointRadius: 0, fill: false, spanGaps: true},
-            {label: 'D Loss', data: losses.map(function (d) { return d.d !== undefined ? d.d : null; }), borderColor: '#dc3545', borderWidth: 1, pointRadius: 0, fill: false, spanGaps: true}
-        ];
-        if (hasFm) {
-            mainDatasets.push({label: 'FM Loss', data: losses.map(function (d) { return d.fm !== undefined ? d.fm : null; }), borderColor: '#ffc107', borderWidth: 1, pointRadius: 0, fill: false, spanGaps: true});
-        }
-        if (hasKl) {
-            mainDatasets.push({label: 'KL Loss', data: losses.map(function (d) { return d.kl !== undefined ? d.kl : null; }), borderColor: '#20c997', borderWidth: 1, pointRadius: 0, fill: false, spanGaps: true});
-        }
-        // 当前模型 checkpoint 标注线
-        var stepAnnotations = [];
-        if (currentStep) {
-            stepAnnotations.push({type: 'line', xMin: currentStep, xMax: currentStep, borderColor: '#e83e8c', borderWidth: 1, borderDash: [4, 4], label: {display: true, content: 'G' + currentStep, color: '#e83e8c', font: {size: 9}, position: 'start'}});
-        }
-        var mainOpts = JSON.parse(JSON.stringify(commonOpts));
-        // 标注插件（Chart.js 4.x 内置 annotation 需插件；若无则跳过）
-        try {
-            if (zoomOk && typeof ChartAnnotation !== 'undefined') {
-                mainOpts.plugins.annotation = {annotations: stepAnnotations};
-            }
-        } catch (e) {}
-        window.infLossChartInst = new Chart(mainCanvas.getContext('2d'), {
-            type: 'line',
-            data: {labels: labels, datasets: mainDatasets},
-            options: mainOpts
-        });
-    }
-
-    // 副图：Mel Loss + Eval Mel
-    var melCanvas = document.getElementById('infMelChart');
-    if (melCanvas) {
-        if (window.infMelChartInst) { try { window.infMelChartInst.destroy(); } catch (e) {} }
-        if (!hasMel && !evals.length) {
-            melCanvas.parentElement.style.display = 'none';
-        } else {
-            melCanvas.parentElement.style.display = '';
-            var melDatasets = [];
-            if (hasMel) {
-                melDatasets.push({label: 'Train Mel', data: losses.map(function (d) { return {x: d.step, y: (d.mel !== undefined ? d.mel : null)}; }), borderColor: '#6f42c1', borderWidth: 1, pointRadius: 0, fill: false, spanGaps: true});
-            }
-            if (evals && evals.length) {
-                // Eval 步数未必与训练 step 对齐，按 step 作为 x 坐标独立绘制
-                melDatasets.push({label: 'Eval Mel', data: evals.map(function (e) { return {x: e.step, y: e.mel}; }), borderColor: '#fd7e14', borderWidth: 1.5, pointRadius: 2, fill: false, spanGaps: true});
-            }
-            var melOpts = JSON.parse(JSON.stringify(commonOpts));
-            // linear x 轴：允许 train/eval 步数不对齐时正确显示
-            melOpts.scales.x.type = 'linear';
-            melOpts.scales.x.title.display = true;
-            melOpts.scales.x.title.text = 'step';
-            window.infMelChartInst = new Chart(melCanvas.getContext('2d'), {
-                type: 'line',
-                data: {datasets: melDatasets},
-                options: melOpts
-            });
-        }
-    }
-
-    // 绑定重置按钮
-    function bindReset(chartInst, btnId, cvEl) {
-        var btn = document.getElementById(btnId);
-        if (!btn || !cvEl || !chartInst || !zoomOk) return;
-        btn.onclick = function () { try { chartInst.resetZoom(); } catch (e) {} btn.style.display = 'none'; };
-        cvEl.addEventListener('mouseup', function () {
-            setTimeout(function () {
-                try {
-                    var z = chartInst.getZoomLevel();
-                    btn.style.display = (z && Math.abs(z - 1) > 0.001) ? '' : 'none';
-                } catch (e) { btn.style.display = ''; }
-            }, 50);
-        });
-        cvEl.addEventListener('wheel', function () {
-            setTimeout(function () { btn.style.display = ''; }, 100);
-        });
-    }
-    bindReset(window.infLossChartInst, 'infLossReset', document.getElementById('infLossChart'));
-    bindReset(window.infMelChartInst, 'infMelReset', document.getElementById('infMelChart'));
-
-    // 元信息
-    if (metaEl) {
-        var parts = [];
-        parts.push('共 ' + losses.length + ' 个记录');
-        if (currentStep) parts.push('当前: G' + currentStep);
-        if (taskName) parts.push('来源: ' + taskName);
-        if (evals && evals.length) parts.push('Eval: ' + evals.length + ' 次');
-        metaEl.textContent = parts.join(' · ');
-    }
 }
 document.addEventListener('DOMContentLoaded', function() {
     var sel = document.querySelector('select[name="config_id"]');
@@ -274,11 +100,11 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
 </div>
 {% else %}
-<div class="row mt-3">
-    <div class="col-md-5">
+<div class="row mt-3 justify-content-center">
+    <div class="col-md-8">
         <div class="card bg-dark border-secondary">
             <div class="card-body">
-                <h5 class="card-title">推理设置</h5>
+                <h5 class="card-title">推理</h5>
                 <form method="POST" enctype="multipart/form-data">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
@@ -298,26 +124,6 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <span class="badge bg-secondary" id="mi-step">step</span>
                                 <span class="badge bg-success" id="mi-unified" style="display:none;">Unified Flow</span>
                             </div>
-                            <div class="text-secondary" id="mi-train" style="font-size:11px;"></div>
-                        </div>
-                    </div>
-                    <div id="modelLossPanel" class="mb-3" style="display:none;">
-                        <div class="card card-body bg-dark border-secondary p-2">
-                            <div class="d-flex align-items-center mb-1">
-                                <small class="text-secondary me-2" style="font-size:0.7rem;">训练 Loss 曲线（G / D / FM / KL）</small>
-                                <button id="infLossReset" type="button" class="btn btn-sm btn-outline-warning py-0 ms-auto" style="font-size:0.65rem;display:none;">重置缩放</button>
-                            </div>
-                            <div style="position:relative;height:220px;">
-                                <canvas id="infLossChart"></canvas>
-                            </div>
-                            <div class="d-flex align-items-center mt-2 mb-1">
-                                <small class="text-secondary me-2" style="font-size:0.7rem;">Mel Loss（重建质量）+ Eval（验证）</small>
-                                <button id="infMelReset" type="button" class="btn btn-sm btn-outline-warning py-0 ms-auto" style="font-size:0.65rem;display:none;">重置缩放</button>
-                            </div>
-                            <div style="position:relative;height:130px;">
-                                <canvas id="infMelChart"></canvas>
-                            </div>
-                            <div class="text-secondary mt-1" id="infLossMeta" style="font-size:11px;"></div>
                         </div>
                     </div>
                     <div class="mb-3">
@@ -413,47 +219,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     <button type="submit" class="btn btn-primary w-100">开始推理</button>
                     <small class="text-secondary d-block mt-2 text-center">参数基于所选配置默认值，可临时调整</small>
                 </form>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-7">
-        <div class="card bg-dark border-secondary mb-3">
-            <div class="card-body">
-                <h5 class="card-title">本次结果</h5>
-                {% if result_file %}
-                <div class="text-center py-3">
-                    <p class="text-success mb-3">✅ 推理完成</p>
-                    <audio controls class="w-100 mb-3">
-                        <source src="{{ url_for('download_result', filename=result_file) }}">
-                    </audio>
-                    <a href="{{ url_for('download_result', filename=result_file) }}" class="btn btn-success">⬇ 下载文件</a>
-                </div>
-                {% else %}
-                <p class="text-secondary text-center py-4">选择配置和音频文件后开始推理</p>
-                {% endif %}
-            </div>
-        </div>
-        <div class="card bg-dark border-secondary">
-            <div class="card-body">
-                <h5 class="card-title">试听历史 <small class="text-secondary">（最近 {{ recent|length }} 次，可并排对比）</small></h5>
-                {% if recent %}
-                <div class="hist-grid">
-                    {% for r in recent %}
-                    <div class="card bg-dark border-secondary hist-card">
-                        <div class="card-body p-2">
-                            <audio controls preload="none" class="w-100 mb-1" style="height:36px;">
-                                <source src="{{ url_for('download_result', filename=r.result) }}">
-                            </audio>
-                            <div class="param-line">F0: {{ r.params.get('f0_predictor', '?') }} · k_step: {{ r.params.get('k_step', '?') }} · 变调: {{ r.params.get('vc_transform', 0) }} · noise: {{ r.params.get('noise_scale', '?') }}</div>
-                            <div class="param-line">检索: {{ r.params.get('cluster_ratio', 0) }} · 增强: {{ '开' if r.params.get('enhancer') else '关' }} · {{ r.params.get('output_format', 'wav') }}</div>
-                            <div class="text-secondary" style="font-size:11px;">{{ r.created.strftime('%m-%d %H:%M') }}</div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <p class="text-secondary text-center py-3">还没有完成过的推理结果</p>
-                {% endif %}
             </div>
         </div>
     </div>

@@ -1,46 +1,125 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>仪表盘</h2>
-<div class="row mt-4">
-    <div class="col-md-6">
-        <div class="card bg-dark border-secondary">
-            <div class="card-body">
-                <h5 class="card-title">模型 ({{ models|length }})</h5>
-                {% if models %}
-                <ul class="list-group list-group-flush bg-dark mt-3">
-                    {% for m in models %}
-                    <li class="list-group-item bg-dark text-light border-secondary d-flex justify-content-between">
-                        <span>{{ m.name }}</span>
-                        <small class="text-secondary">{{ m.created_at.strftime('%Y-%m-%d') }}</small>
-                    </li>
-                    {% endfor %}
-                </ul>
-                {% else %}
-                <p class="text-secondary mt-3">还没有上传模型</p>
+
+<!-- 配额用量 -->
+<div class="row mt-4 g-2">
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">今日推理（音频秒）</div>
+                <div class="fs-4">{{ used_today }}<span class="text-secondary fs-6"> / {{ daily_limit }}</span></div>
+                {% if daily_limit %}
+                <div class="progress mt-2" style="height:6px;">
+                    {% set pct = [100, (used_today * 100 / daily_limit)|round|int]|min %}
+                    <div class="progress-bar {{ 'bg-danger' if pct >= 100 else 'bg-success' }}" style="width: {{ pct }}%"></div>
+                </div>
                 {% endif %}
-                <a href="{{ url_for('model_upload') }}" class="btn btn-primary mt-3">上传模型</a>
             </div>
         </div>
     </div>
-    <div class="col-md-6">
-        <div class="card bg-dark border-secondary">
-            <div class="card-body">
-                <h5 class="card-title">推理配置 ({{ configs|length }})</h5>
-                {% if configs %}
-                <ul class="list-group list-group-flush bg-dark mt-3">
-                    {% for c in configs %}
-                    <li class="list-group-item bg-dark text-light border-secondary d-flex justify-content-between">
-                        <span>{{ c.name }}</span>
-                        <small class="text-secondary">{{ c.model.name }}</small>
-                    </li>
-                    {% endfor %}
-                </ul>
-                {% else %}
-                <p class="text-secondary mt-3">还没有创建配置</p>
-                {% endif %}
-                <a href="{{ url_for('config_create') }}" class="btn btn-primary mt-3">创建配置</a>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">进行中/排队</div>
+                <div class="fs-4">{{ running_cnt + queued_cnt }}</div>
+                <div class="text-secondary small">运行 {{ running_cnt }} · 排队 {{ queued_cnt }}</div>
             </div>
         </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">今日任务</div>
+                <div class="fs-4">{{ done_today + fail_today }}</div>
+                <div class="text-secondary small">完成 {{ done_today }} · 失败 {{ fail_today }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">可用模型</div>
+                <div class="fs-4">{{ models|length }}</div>
+                <div class="text-secondary small">官方 {{ official_cnt }} · 私有 {{ private_cnt }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3 g-2">
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">推理配置</div>
+                <div class="fs-4">{{ config_cnt }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">私有模型上限</div>
+                <div class="fs-4">{{ private_cnt }}<span class="text-secondary fs-6"> / {{ quota.max_private_models }}</span></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">结果保留</div>
+                <div class="fs-4">{{ quota.results_retention_days }}<span class="text-secondary fs-6"> 天</span></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">快速操作</div>
+                <div class="d-grid gap-1 mt-1">
+                    <a href="{{ url_for('inference') }}" class="btn btn-sm btn-primary">新建推理</a>
+                    <a href="{{ url_for('model_upload') }}" class="btn btn-sm btn-outline-secondary">上传模型</a>
+                    <a href="{{ url_for('task_list') }}" class="btn btn-sm btn-outline-secondary">任务列表</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 最近任务 -->
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">最近任务</h5>
+            <a href="{{ url_for('task_list') }}" class="btn btn-sm btn-outline-secondary">全部</a>
+        </div>
+        {% if recent %}
+        <div class="table-responsive mt-2">
+            <table class="table table-dark table-striped mb-0">
+                <thead>
+                    <tr><th>#</th><th>模型</th><th>状态</th><th>进度</th><th>时间</th><th></th></tr>
+                </thead>
+                <tbody>
+                    {% for r in recent %}
+                    <tr>
+                        <td>#{{ r.id }}</td>
+                        <td>{{ r.model }}</td>
+                        <td>{{ r.status_label }}</td>
+                        <td class="text-secondary small">{{ r.progress_msg[:40] }}</td>
+                        <td class="text-secondary small">{{ r.created.strftime('%m-%d %H:%M') }}</td>
+                        <td>
+                            {% if r.can_download %}
+                            <a href="{{ url_for('task_result', task_id=r.id) }}" class="btn btn-sm btn-success">下载</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-secondary text-center py-3 mb-0">还没有推理任务</p>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

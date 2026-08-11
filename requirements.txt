@@ -25,6 +25,8 @@ onnx
 onnxruntime
 onnxsim
 onnxoptimizer
+SQLAlchemy
+Flask-Migrate
 
 # ===== Flask 服务 =====
 Flask
