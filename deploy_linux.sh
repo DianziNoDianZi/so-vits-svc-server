@@ -105,6 +105,7 @@ EOF
 echo "[3/5] Creating Python 3.9 Conda environment..."
 if ! conda env list | awk -v n="$ENV_NAME" '$1==n' | grep -q .; then
     conda create -y -n "$ENV_NAME" python=3.9 \
+        --retries 6 \
         --override-channels \
         -c https://mirrors.ustc.edu.cn/anaconda/pkgs/main/ \
         -c https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge/
@@ -117,13 +118,26 @@ PIP_ARGS="--root-user-action=ignore --timeout 60 --retries 5"
 pip install -q $PIP_ARGS -i https://pypi.tuna.tsinghua.edu.cn/simple --upgrade pip 'setuptools<81' wheel
 
 echo "  Installing PyTorch..."
-# 连不了海外，PyTorch 全部走阿里云镜像（镜像 download.pytorch.org 的 wheels）
+# 连不了海外，PyTorch 走国内镜像。单个镜像可能没同步/404（阿里云 cpu/ 就是空的），
+# 所以多个轮着试；都失败再回退清华 PyPI（torch 是 CUDA 版 wheel，CPU 上也能跑，只是下载大）。
 if [ "$TORCH_CHOICE" = "1" ]; then
-    pip install $PIP_ARGS torch torchaudio --index-url https://mirrors.aliyun.com/pytorch-wheels/cu121/
+    MIRRORS="https://mirrors.aliyun.com/pytorch-wheels/cu121/ https://mirror.sjtu.edu.cn/pytorch-wheels/cu121/"
 elif [ "$TORCH_CHOICE" = "2" ]; then
-    pip install $PIP_ARGS torch torchaudio --index-url https://mirrors.aliyun.com/pytorch-wheels/rocm/
+    MIRRORS="https://mirrors.aliyun.com/pytorch-wheels/rocm/ https://mirror.sjtu.edu.cn/pytorch-wheels/rocm/"
 else
-    pip install $PIP_ARGS torch torchaudio --index-url https://mirrors.aliyun.com/pytorch-wheels/cpu/
+    MIRRORS="https://mirrors.aliyun.com/pytorch-wheels/cpu/ https://mirror.sjtu.edu.cn/pytorch-wheels/cpu/"
+fi
+TORCH_OK=0
+for IDX in $MIRRORS; do
+    echo "  Trying torch from: $IDX"
+    if pip install $PIP_ARGS torch torchaudio --index-url "$IDX"; then
+        TORCH_OK=1
+        break
+    fi
+done
+if [ "$TORCH_OK" != "1" ]; then
+    echo "  国内 pytorch 镜像都失败，回退清华 PyPI"
+    pip install $PIP_ARGS torch torchaudio -i https://pypi.tuna.tsinghua.edu.cn/simple
 fi
 
 echo "  Downgrading pip to bypass omegaconf dependency lock..."
