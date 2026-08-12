@@ -88,16 +88,14 @@ fi
 source "$CONDA_DIR/etc/profile.d/conda.sh"
 
 cat > "$HOME/.condarc" <<EOF
-# 这台机器连不了海外，conda 全走国内镜像；USTC 优先，阿里云/清华兜底
+# 这台机器连不了海外，conda 只用 USTC（阿里云 anaconda 的 pkgs/main 是 404，清华又连不上，别加了）
 channels:
   - https://mirrors.ustc.edu.cn/anaconda/pkgs/main/
-  - https://mirrors.aliyun.com/anaconda/pkgs/main/
-  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/
+  - https://mirrors.ustc.edu.cn/anaconda/pkgs/r/
   - https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge/
 default_channels:
   - https://mirrors.ustc.edu.cn/anaconda/pkgs/main/
-  - https://mirrors.aliyun.com/anaconda/pkgs/main/
-  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r/
+  - https://mirrors.ustc.edu.cn/anaconda/pkgs/r/
 custom_channels:
   conda-forge: https://mirrors.ustc.edu.cn/anaconda/cloud
 show_channel_urls: true
@@ -109,7 +107,6 @@ if ! conda env list | awk -v n="$ENV_NAME" '$1==n' | grep -q .; then
     conda create -y -n "$ENV_NAME" python=3.9 \
         --override-channels \
         -c https://mirrors.ustc.edu.cn/anaconda/pkgs/main/ \
-        -c https://mirrors.aliyun.com/anaconda/pkgs/main/ \
         -c https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge/
 fi
 conda activate "$ENV_NAME"
