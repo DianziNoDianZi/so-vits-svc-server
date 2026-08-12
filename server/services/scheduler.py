@@ -467,14 +467,15 @@ def _email_resource_warning(message):
         last = get_setting('resource_email_at', '0')
         if time.time() - int(last or 0) < _RESOURCE_EMAIL_INTERVAL:
             return
-        from notifier import send_via_server
+        from notifier import send_via_server, render_email
         sent = 0
         for u in User.query.all():
             rec = getattr(u, 'notify_email', None) or u.email
             if not rec:
                 continue
             try:
-                if send_via_server(rec, '[SoVITS] 服务器资源紧张', message + '\n\n--- So-VITS-SVC 推理服务 ---'):
+                subject, body = render_email('resource', message=message, username=u.username)
+                if send_via_server(rec, subject, body):
                     sent += 1
             except Exception:
                 continue

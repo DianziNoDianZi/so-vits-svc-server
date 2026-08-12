@@ -1,6 +1,7 @@
 """管理员蓝图：总览/用户配额/全局任务/模型审核/存储/设置/公告。"""
 import csv
 import io
+import json
 import os
 from datetime import datetime
 
@@ -397,6 +398,55 @@ def admin_update():
     return redirect(url_for('admin_settings'))
 
 
+_TEMPLATE_LABELS = {
+    'infer_done': '推理成功',
+    'infer_failed': '推理失败',
+    'welcome': '注册欢迎',
+    'resource': '资源紧张告警',
+    'announcement': '公告群发',
+}
+_TEMPLATE_HINTS = {
+    'infer_done': '{task_id} 任务号 · {model} 模型名 · {result_link} 结果链接 · {progress} 进度 · {username} 用户名',
+    'infer_failed': '{task_id} 任务号 · {model} 模型名 · {error} 错误信息 · {username} 用户名',
+    'welcome': '{username} 用户名 · {recipient} 接收邮箱',
+    'resource': '{message} 告警内容 · {username} 用户名',
+    'announcement': '{title} 公告标题 · {content} 公告正文 · {username} 用户名',
+}
+
+
+@bp.route('/admin/email-templates', methods=['GET', 'POST'], endpoint='admin_email_templates')
+@login_required
+def admin_email_templates():
+    """自定义各类邮件的标题/正文模板。"""
+    _guard()
+    from notifier import DEFAULT_TEMPLATES
+    if request.method == 'POST':
+        data = {}
+        for key, default in DEFAULT_TEMPLATES.items():
+            data[key] = {
+                'subject': request.form.get(f'{key}_subject', default['subject']),
+                'body': request.form.get(f'{key}_body', default['body']),
+            }
+        set_setting('email_templates', json.dumps(data, ensure_ascii=False))
+        flash('邮件模板已保存', 'success')
+        return redirect(url_for('admin_email_templates'))
+    saved = {}
+    try:
+        saved = json.loads(get_setting('email_templates', '{}') or '{}')
+    except Exception:
+        saved = {}
+    templates = {}
+    for key, default in DEFAULT_TEMPLATES.items():
+        cur = saved.get(key) or {}
+        templates[key] = {
+            'label': _TEMPLATE_LABELS.get(key, key),
+            'hint': _TEMPLATE_HINTS.get(key, ''),
+            'subject': cur.get('subject', default['subject']),
+            'body': cur.get('body', default['body']),
+        }
+    return render_template('admin_email_templates.html', templates=templates)
+
+
 @bp.route('/admin/settings', methods=['GET', 'POST'], endpoint='admin_settings')
 @login_required
 def admin_settings():
@@ -475,15 +525,15 @@ def admin_announcements_create():
                                 is_active=True, created_by_user_id=current_user.id))
     db.session.commit()
     if request.form.get('email_all') == 'on':
-        from notifier import send_via_server
+        from notifier import send_via_server, render_email
         sent = 0
-        body = f'{title}\n\n{content}\n\n--- So-VITS-SVC 推理服务 ---'
         for u in User.query.all():
             rec = getattr(u, 'notify_email', None) or u.email
             if not rec:
                 continue
             try:
-                if send_via_server(rec, f'[SoVITS] {title}', body):
+                subject, body = render_email('announcement', title=title, content=content, username=u.username)
+                if send_via_server(rec, subject, body):
                     sent += 1
             except Exception:
                 continue
