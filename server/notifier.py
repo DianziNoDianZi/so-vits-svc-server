@@ -13,15 +13,18 @@ def send(recipient, smtp_user, smtp_pwd, subject, body, host=None, port=None, us
         msg['Subject'] = subject
         msg['From'] = from_addr or smtp_user
         msg['To'] = recipient
+        # 用 sendmail 发原始字节，别用 send_message：
+        # 某些 Python 版本 + 中文内容时 send_message 会崩 "'utf8' is an invalid keyword argument for Compat32"
+        raw = msg.as_string().encode('utf-8')
         if use_ssl:
             with smtplib.SMTP_SSL(host, port, timeout=10) as s:
                 s.login(smtp_user, smtp_pwd)
-                s.send_message(msg)
+                s.sendmail(smtp_user, [recipient], raw)
         else:
             with smtplib.SMTP(host, port, timeout=10) as s:
                 s.starttls()
                 s.login(smtp_user, smtp_pwd)
-                s.send_message(msg)
+                s.sendmail(smtp_user, [recipient], raw)
         return True
     except Exception:
         return False
