@@ -36,8 +36,8 @@ class UserQuota(db.Model):
     max_queued_tasks = db.Column(db.Integer, default=4)
     max_running_tasks = db.Column(db.Integer, default=1)
     max_input_seconds = db.Column(db.Integer, default=600)
-    max_daily_tasks = db.Column(db.Integer, default=50)
-    max_cpu_cores = db.Column(db.Integer, default=0)  # 0=不限制
+    max_daily_tasks = db.Column(db.Integer, default=50)   # 每日可提交任务数（不是音频秒数！）
+    max_cpu_cores = db.Column(db.Integer, default=0)      # 0=不限制，免得小白管理员真去数 CPU
     storage_quota_bytes = db.Column(db.BigInteger, default=10 * 1024 * 1024 * 1024)
     max_model_bytes = db.Column(db.BigInteger, default=4 * 1024 * 1024 * 1024)
     max_private_models = db.Column(db.Integer, default=3)

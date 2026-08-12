@@ -166,6 +166,8 @@ def model_edit(model_id):
 
 
 def delete_model_resources(m):
+    # 审核不通过=整包删掉，别留着占地方。这也是用户明确要的：
+    # "不通过则会删除"，那就删干净，文件、配置、关联推理配置一起带走。
     InferenceConfig.query.filter_by(model_id=m.id).delete()
     for attr in ['model_path', 'config_path', 'diff_model_path', 'diff_config_path', 'cluster_path']:
         path = getattr(m, attr)

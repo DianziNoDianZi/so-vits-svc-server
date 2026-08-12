@@ -19,6 +19,9 @@ def init_app(app):
 
 
 def training_enabled():
+    # 训练是"可选功能"，默认关着，只有管理员能开。
+    # 原因很简单：训练又吃显存又占机器，普通人开着只会让大家的推理一起排队。
+    # 谁想用，谁找管理员开，别默认就怼脸上。
     return get_setting('training_enabled', '0') == '1'
 
 

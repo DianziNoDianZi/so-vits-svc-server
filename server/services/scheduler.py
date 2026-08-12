@@ -134,7 +134,10 @@ def task_scheduler_daemon():
                     if not quota.enabled:
                         continue
                     running = Task.query.filter(Task.user_id == t.user_id, Task.status == 'running').count()
-                    # queued 包含候选任务自身，认领它不新增任务数，因此仅严格超过上限才跳过（修复差一错误）
+                    # 这里当初是个差点让用户崩溃的坑：queued 把"候选任务自己"也算进去了，
+                    # 用的是 >=。于是谁把 max_queued_tasks 设成 1，谁的唯一一个任务就永远排不上——
+                    # 用户："我上传了个推理人物，怎么一直排队？" 改回严格大于才恢复正常。
+                    # 想当然写 >= 的我，给用户道个歉。
                     queued = Task.query.filter(Task.user_id == t.user_id, Task.status.in_(['pending', 'claimed', 'running'])).count()
                     if quota.max_running_tasks and running >= quota.max_running_tasks:
                         continue
@@ -166,7 +169,9 @@ def task_scheduler_daemon():
                 task.status = 'claimed'
                 task.progress_msg = '等待执行器...'
                 task.lease_expires_at = datetime.utcnow() + timedelta(minutes=10)
-                task.heartbeat_at = datetime.utcnow()  # 认领即写心跳，避免 _recover 立刻当失联重置
+                # 认领时就得把心跳写上去，不然 _recover_expired_leases 一看 heartbeat 是空，
+                # 直接当"执行器失联"把刚领的任务踹回排队，来回抖到天荒地老。
+                task.heartbeat_at = datetime.utcnow()
                 task.claimed_by = 'scheduler'
                 task.priority_snapshot = quota.priority
                 db.session.commit()

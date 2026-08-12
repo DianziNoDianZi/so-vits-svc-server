@@ -59,7 +59,12 @@ def _allowed_audio(name):
 
 
 def _submit_one(cfg_obj, model, quota, audio_file, user):
-    """提交单个音频：返回 ('ok', None) 或 ('skip', reason)。"""
+    """提交单个音频：返回 ('ok', None) 或 ('skip', reason)。
+
+    一次传 10 个音频就循环调它十遍，各自独立落库成任务。
+    谁家的规则？每天的配额按"任务个数"算，不是按音频秒数——之前按秒数算，
+    长音频一提交就把额度吃光，短音频却随便灌，总觉得哪里不对劲。
+    """
     if not audio_file or not audio_file.filename:
         return 'skip', '空文件'
     if not _allowed_audio(audio_file.filename):

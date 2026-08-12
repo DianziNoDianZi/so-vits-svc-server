@@ -11,8 +11,10 @@ from werkzeug.routing.exceptions import BuildError
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
-# 服务器模块优先（避免与仓库根目录的上游同名模块如 utils.py 冲突）：
-# 先插 PROJECT_DIR（供 authorization 等仓库根模块），最后插 SERVER_DIR 使其位于 sys.path[0]
+# 路径顺序千万别手贱换：上游算法（models.py 等）要 `from utils import f0_to_coarse`，
+# 指的就是仓库根目录那个 utils.py。之前我图省事在 server/ 底下也放了个 utils.py，
+# 结果一上传模型推理就 ImportError，排查了半天才发现是俩模块抢名字。
+# 所以服务端工具都叫 apputils，绝不跟上游撞名；SERVER_DIR 放最后插，保证它排在最前。
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 sys.path.insert(0, SERVER_DIR)
@@ -27,6 +29,8 @@ import services.training as training
 
 
 def migrate_db():
+    # SQLite 不支持 ALTER 加约束，只能这样一列一列补。看着啰嗦，
+    # 但至少老库升级不会炸，也不用指望 Flask-Migrate 那套自动生成的东西。
     import sqlalchemy as sa
     inspector = sa.inspect(db.engine)
     tcols = [c['name'] for c in inspector.get_columns('task')]
