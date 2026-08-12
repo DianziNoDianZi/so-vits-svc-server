@@ -175,6 +175,13 @@ else
             rm -f /tmp/nsf_hifigan.zip
         fi
     fi
+    # 扩散推理需要 pretrain/nsf_hifigan_finetuned/，没有就复制 nsf_hifigan 一份顶上
+    if [ ! -f "$DEPLOY_DIR/pretrain/nsf_hifigan_finetuned/model" ]; then
+        mkdir -p "$DEPLOY_DIR/pretrain/nsf_hifigan_finetuned"
+        cp "$DEPLOY_DIR/pretrain/nsf_hifigan/model" "$DEPLOY_DIR/pretrain/nsf_hifigan_finetuned/model" 2>/dev/null || true
+        cp "$DEPLOY_DIR/pretrain/nsf_hifigan/config.json" "$DEPLOY_DIR/pretrain/nsf_hifigan_finetuned/config.json" 2>/dev/null || true
+        echo "  nsf_hifigan_finetuned 已从 nsf_hifigan 复制（扩散声码器回退）"
+    fi
 fi
 
 # Setup Swap

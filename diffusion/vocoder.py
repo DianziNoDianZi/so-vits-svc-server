@@ -1,3 +1,5 @@
+import os
+
 import torch
 from torchaudio.transforms import Resample
 
@@ -50,6 +52,11 @@ class NsfHifiGAN(torch.nn.Module):
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.device = device
+        # 扩散声码器默认指向 pretrain/nsf_hifigan_finetuned/，
+        # 但很多部署没下载这个目录。缺了就回退到 nsf_hifigan/（结构相同，能跑）。
+        if not os.path.exists(model_path) and 'nsf_hifigan_finetuned' in model_path:
+            model_path = model_path.replace('nsf_hifigan_finetuned', 'nsf_hifigan')
+            print(f'[vocoder] nsf_hifigan_finetuned 缺失，回退到 nsf_hifigan: {model_path}', flush=True)
         self.model_path = model_path
         self.model = None
         self.h = load_config(model_path)
