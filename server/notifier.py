@@ -11,7 +11,11 @@ def send(recipient, smtp_user, smtp_pwd, subject, body, host=None, port=None, us
     try:
         msg = MIMEText(body, 'plain', 'utf-8')
         msg['Subject'] = subject
-        msg['From'] = from_addr or smtp_user
+        # QQ 等要求 From 必须是合法邮箱（RFC5322），若“发件人”填了无 @ 的昵称会 550
+        from_addr = from_addr or smtp_user
+        if from_addr and '@' not in from_addr:
+            from_addr = smtp_user
+        msg['From'] = from_addr
         msg['To'] = recipient
         # 用 sendmail 发原始字节，别用 send_message：
         # 某些 Python 版本 + 中文内容时 send_message 会崩 "'utf8' is an invalid keyword argument for Compat32"
