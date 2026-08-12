@@ -354,6 +354,49 @@ def admin_storage_delete():
     return redirect(url_for('admin_storage'))
 
 
+@bp.route('/admin/update', methods=['POST'], endpoint='admin_update')
+@login_required
+def admin_update():
+    """管理员一键更新：git pull（+可选延迟重启）。仅管理员可用，二次确认。"""
+    _guard()
+    import subprocess as _sp
+    repo_url = request.form.get('repo_url', '').strip()
+    want_restart = request.form.get('restart') == 'on'
+    # admin.py 在 server/server/blueprints/ 下，仓库根是再上两级
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    output = []
+    try:
+        cmd = ['git', 'pull'] + ([repo_url] if repo_url else [])
+        r = _sp.run(cmd, cwd=root, capture_output=True, text=True, timeout=180)
+        if (r.stdout or '').strip():
+            output.append(r.stdout[-1000:])
+        if (r.stderr or '').strip():
+            output.append(r.stderr[-500:])
+        if r.returncode != 0:
+            flash('更新失败（可能本地有未提交改动）：\n' + '\n'.join(output)[-1200:], 'danger')
+            return redirect(url_for('admin_settings'))
+    except Exception as e:
+        flash(f'更新异常：{e}', 'danger')
+        return redirect(url_for('admin_settings'))
+
+    if want_restart:
+        import threading
+        def _restart():
+            import time as _t
+            _t.sleep(5)
+            try:
+                if os.name != 'nt':
+                    _sp.run(['systemctl', 'restart', 'ssvc'], capture_output=True, timeout=60)
+            except Exception:
+                pass
+        threading.Thread(target=_restart, daemon=True).start()
+        extra = '（Windows 无法自动重启，请手动重启服务）' if os.name == 'nt' else '，5 秒后自动重启'
+        flash('更新完成' + extra + '\n' + '\n'.join(output)[-1200:], 'success')
+    else:
+        flash('更新完成，请手动重启服务生效：\n' + '\n'.join(output)[-1200:], 'success')
+    return redirect(url_for('admin_settings'))
+
+
 @bp.route('/admin/settings', methods=['GET', 'POST'], endpoint='admin_settings')
 @login_required
 def admin_settings():

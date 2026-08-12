@@ -111,5 +111,25 @@
             </div>
         </div>
     </div>
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h5 class="card-title text-center mb-4">系统更新</h5>
+                <p class="text-secondary small text-center mb-3">从 Git 拉取最新代码（仅管理员，本地未提交改动会导致失败）。</p>
+                <form method="POST" action="{{ url_for('admin_update') }}">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label">仓库地址 <small class="text-secondary">（留空=按当前远程拉取）</small></label>
+                        <input type="text" name="repo_url" class="form-control bg-dark text-light border-secondary" placeholder="留空即可">
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" name="restart" value="on" class="form-check-input" id="updRestart">
+                        <label class="form-check-label" for="updRestart">更新后自动重启服务</label>
+                    </div>
+                    <button type="submit" class="btn btn-warning w-100" onclick="return confirm('确认从 Git 更新代码？更新前请确保没有未提交的本地改动。')">执行更新</button>
+                </form>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
