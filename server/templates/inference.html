@@ -1,41 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <style>
-#loading-overlay {
-    display: none;
-    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0,0,0,0.8); z-index: 9999;
-    justify-content: center; align-items: center;
-    flex-direction: column;
-}
-#loading-overlay.active { display: flex; }
-.spinner {
-    border: 4px solid #30363d; border-top: 4px solid #58a6ff;
-    border-radius: 50%; width: 48px; height: 48px;
-    animation: spin 1s linear infinite;
-}
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 .hist-card { font-size: 12px; }
 .hist-card .param-line { color: #9aa7cc; word-break: break-all; }
 .hist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
 </style>
 
-<div id="loading-overlay">
-    <div class="spinner"></div>
-    <p class="text-light mt-3" id="progress-msg">正在提交推理任务，请稍候...</p>
-    <p class="text-secondary" id="elapsed">已耗时: 0s</p>
-</div>
-
 <script>
-document.querySelector('form')?.addEventListener('submit', function() {
-    document.getElementById('loading-overlay').classList.add('active');
-    var start = Date.now();
-    var timer = setInterval(function() {
-        var s = Math.floor((Date.now() - start) / 1000);
-        document.getElementById('elapsed').textContent = '已耗时: ' + s + 's';
-    }, 500);
-});
-
 function fillParams(select) {
     var opt = select.options[select.selectedIndex];
     if (!opt || !opt.dataset.params) return;
@@ -108,7 +79,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="card bg-dark border-secondary">
             <div class="card-body">
                 <h5 class="card-title">推理</h5>
-                <form method="POST" enctype="multipart/form-data">
+                <form method="POST" enctype="multipart/form-data" class="js-upload">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label class="form-label">推理配置（默认值）</label>

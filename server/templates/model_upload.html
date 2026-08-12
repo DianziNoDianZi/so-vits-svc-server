@@ -3,7 +3,7 @@
 <h2>上传模型</h2>
 <div class="card bg-dark border-secondary mt-3">
     <div class="card-body">
-        <form method="POST" enctype="multipart/form-data">
+        <form method="POST" enctype="multipart/form-data" class="js-upload">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
             <div class="mb-3">
                 <label class="form-label">模型名称 <small class="text-secondary">（自定义，方便识别）</small></label>
