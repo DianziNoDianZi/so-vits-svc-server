@@ -127,12 +127,12 @@ echo [4/4] Checking pretrained models...
 if exist "pretrain\checkpoint_best_legacy_500.pt" (
     echo   ContentVec: OK
 ) else (
-    echo   ContentVec: missing - upload later via web UI (Pretrain page)
+    echo   ContentVec: missing - manually put it into pretrain\  (no web upload page anymore)
 )
 if exist "pretrain\nsf_hifigan\model" (
     echo   NSF-HiFiGAN: OK
 ) else (
-    echo   NSF-HiFiGAN: missing - upload later via web UI (Pretrain page)
+    echo   NSF-HiFiGAN: missing - manually put it into pretrain\nsf_hifigan\
 )
 
 echo.
