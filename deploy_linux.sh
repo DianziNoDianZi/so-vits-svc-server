@@ -60,10 +60,11 @@ fi
 # === 3. Install Miniconda ===
 echo "[2/5] Installing Miniconda..."
 if [ ! -d "$CONDA_DIR" ]; then
+    # 这台机器连不了海外，只用国内镜像（官方 repo.anaconda.com 会连不上）
     MINICONDA_URLS=(
-        "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
         "https://mirrors.ustc.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh"
         "https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+        "https://mirrors.nju.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh"
     )
     downloaded=0
     for u in "${MINICONDA_URLS[@]}"; do
@@ -114,10 +115,11 @@ PIP_ARGS="--root-user-action=ignore --timeout 60 --retries 5"
 pip install -q $PIP_ARGS -i https://pypi.tuna.tsinghua.edu.cn/simple --upgrade pip 'setuptools<81' wheel
 
 echo "  Installing PyTorch..."
+# 连不了海外，PyTorch 全部走阿里云镜像（镜像 download.pytorch.org 的 wheels）
 if [ "$TORCH_CHOICE" = "1" ]; then
-    pip install $PIP_ARGS torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+    pip install $PIP_ARGS torch torchaudio --index-url https://mirrors.aliyun.com/pytorch-wheels/cu121/
 elif [ "$TORCH_CHOICE" = "2" ]; then
-    pip install $PIP_ARGS torch torchaudio --index-url https://download.pytorch.org/whl/rocm
+    pip install $PIP_ARGS torch torchaudio --index-url https://mirrors.aliyun.com/pytorch-wheels/rocm/
 else
     pip install $PIP_ARGS torch torchaudio --index-url https://mirrors.aliyun.com/pytorch-wheels/cpu/
 fi
