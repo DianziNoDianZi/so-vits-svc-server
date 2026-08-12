@@ -264,11 +264,12 @@ def task_worker():
                 tail_lines = deque(maxlen=100)
                 started_at = time.time()
                 task_timeout = int(os.environ.get('INFERENCE_TASK_TIMEOUT', str(6 * 3600)))
-                processed_sec = 0.0
                 result_ok = False
                 result_err = None
                 hb_count = 0
                 while True:
+                    # 每次从日志文件重算已处理时长：循环内重置，避免把之前读过的行重复累加
+                    processed_sec = 0.0
                     hb_count += 1
                     if hb_count % 30 == 0:
                         task.heartbeat_at = datetime.utcnow()
