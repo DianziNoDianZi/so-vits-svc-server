@@ -105,7 +105,6 @@ EOF
 echo "[3/5] Creating Python 3.9 Conda environment..."
 if ! conda env list | awk -v n="$ENV_NAME" '$1==n' | grep -q .; then
     conda create -y -n "$ENV_NAME" python=3.9 \
-        --retries 6 \
         --override-channels \
         -c https://mirrors.ustc.edu.cn/anaconda/pkgs/main/ \
         -c https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge/
