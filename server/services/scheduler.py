@@ -39,12 +39,15 @@ scheduler_last_user_id = None
 scheduler_lock = threading.Lock()
 cleanup_started = False
 resource_monitor_started = False
+watchdog_started = False
 resource_warning = {'active': False, 'message': ''}
 
 inference_q = None
 inference_done_q = None
 inference_daemon_proc = None
-INFERENCE_MODEL_CACHE = int(os.environ.get('INFERENCE_MODEL_CACHE', '3') or 3)
+INFERENCE_MODEL_CACHE = int(os.environ.get('INFERENCE_MODEL_CACHE', '1') or 1)
+# 长段推理内存会爆（3.8G 小鸡上 70s 一段直接 OOM），强制切成 clip_seconds 秒的小块推理。
+INFERENCE_CLIP_SECONDS = float(os.environ.get('INFERENCE_CLIP_SECONDS', '15') or 15)
 
 
 def _stream_lines(stream):
@@ -247,6 +250,7 @@ def task_worker():
                     'cluster_path': full_cluster,
                     'device': task.device_pref or 'auto',
                     'max_cpu_cores': int(current_quota(task.user).max_cpu_cores or 0),
+                    'clip_seconds': INFERENCE_CLIP_SECONDS,
                 }
                 inference_q.put((task_id, payload))
 
@@ -254,7 +258,8 @@ def task_worker():
                 import soundfile as sf
                 try:
                     audio_info = sf.info(audio_path)
-                    estimated_total = max(int(audio_info.duration / 10) + 1, 1)
+                    est_sec = INFERENCE_CLIP_SECONDS if INFERENCE_CLIP_SECONDS > 0 else 10
+                    estimated_total = max(int(audio_info.duration / est_sec) + 1, 1)
                 except Exception:
                     estimated_total = 5
                 tail_lines = deque(maxlen=100)
@@ -302,7 +307,8 @@ def task_worker():
                             if not text:
                                 continue
                             tail_lines.append(text)
-                            if '#=====segment start' in text:
+                            # clip 切块后每小块会打 #=====segment clip start，两种行都算完成一段
+                            if '#=====segment start' in text or '=====segment clip start' in text:
                                 segments_done += 1
                     except OSError:
                         pass
@@ -389,6 +395,9 @@ def ensure_worker():
     if not resource_monitor_started:
         resource_monitor_started = True
         threading.Thread(target=_resource_monitor_daemon, daemon=True).start()
+    if not watchdog_started:
+        watchdog_started = True
+        threading.Thread(target=_watchdog_daemon, daemon=True).start()
 
 
 def _recover_tasks():
@@ -399,6 +408,53 @@ def _recover_tasks():
             t.lease_expires_at = None
             t.progress_msg = '服务重启后重新排队'
         db.session.commit()
+
+
+def _watchdog_daemon():
+    """监控推理 daemon 进程。daemon 被 OOM/段错误杀死（Python except 拦不住）时，
+    把它正在跑的任务标记为失败并自动重启 daemon，避免后续任务永远卡在"推理中"。
+    """
+    global inference_daemon_proc, inference_active_id
+    with _app.app_context():
+        while True:
+            time.sleep(10)
+            try:
+                if inference_q is None or inference_done_q is None:
+                    continue
+                if inference_daemon_proc is not None and inference_daemon_proc.is_alive():
+                    continue
+                # 进程已死（可能 OOM），先回收僵尸，再处理任务和重启
+                if inference_daemon_proc is not None:
+                    try:
+                        inference_daemon_proc.join(timeout=1)
+                    except Exception:
+                        pass
+                tid = inference_active_id
+                if tid is not None:
+                    try:
+                        t = db.session.get(Task, tid)
+                        if t and t.status in ('running', 'claimed', 'pending'):
+                            t.status = 'failed'
+                            t.error_msg = '推理进程崩溃（可能内存不足），任务失败'
+                            t.progress_msg = '失败: 推理进程崩溃（可能内存不足）'
+                            t.done_at = datetime.utcnow()
+                            db.session.commit()
+                        # 塞一个失败通知，让 task_worker 从等待 .done 的循环里醒过来继续
+                        inference_done_q.put((tid, False, '推理进程崩溃'))
+                    except Exception:
+                        db.session.rollback()
+                try:
+                    from inference_daemon import main as _daemon_main
+                    inference_daemon_proc = mp_module.Process(
+                        target=_daemon_main, args=(inference_q, inference_done_q, INFERENCE_MODEL_CACHE),
+                        daemon=True, name='inference-daemon')
+                    inference_daemon_proc.start()
+                    print(f'[watchdog] 推理 daemon 崩溃后已自动重启 (pid={inference_daemon_proc.pid})', flush=True)
+                except Exception as e:
+                    print(f'[watchdog] 推理 daemon 重启失败: {e}', flush=True)
+                inference_active_id = None
+            except Exception:
+                traceback.print_exc()
 
 
 _RESOURCE_THRESHOLD = float(os.environ.get('RESOURCE_THRESHOLD', '90'))

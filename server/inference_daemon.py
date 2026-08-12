@@ -228,7 +228,7 @@ def _run_inference(p, svc, device):
             auto_predict_f0=params.get('auto_f0', False),
             noice_scale=params.get('noise_scale', 0.4),
             pad_seconds=params.get('pad_seconds', 0.5),
-            clip_seconds=0,
+            clip_seconds=float(p.get('clip_seconds') or 0),
             lg_num=0,
             lgr_num=0.75,
             f0_predictor=params.get('f0_predictor', 'pm'),

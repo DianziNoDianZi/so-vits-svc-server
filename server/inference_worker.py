@@ -83,6 +83,9 @@ def main():
     diff_config_path = sys.argv[8] if sys.argv[8] != 'none' else None
     cluster_path = sys.argv[9] if sys.argv[9] != 'none' else None
 
+    # 长段推理内存会爆，切成小块再推理；与 daemon 路径共用 INFERENCE_CLIP_SECONDS
+    clip_seconds = float(os.environ.get('INFERENCE_CLIP_SECONDS', '15') or 15)
+
     # 选择推理设备（优先使用用户设置，其次配置参数）
     device_pref = os.environ.get('SSVC_DEVICE', params.get('device', 'auto'))
     if device_pref == 'cpu':
@@ -134,7 +137,7 @@ def main():
         auto_predict_f0=params.get('auto_f0', False),
         noice_scale=params.get('noise_scale', 0.4),
         pad_seconds=params.get('pad_seconds', 0.5),
-        clip_seconds=0,
+        clip_seconds=clip_seconds,
         lg_num=0,
         lgr_num=0.75,
         f0_predictor=params.get('f0_predictor', 'pm'),
