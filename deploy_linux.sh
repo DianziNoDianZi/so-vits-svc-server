@@ -68,7 +68,9 @@ if [ ! -d "$CONDA_DIR" ]; then
     downloaded=0
     for u in "${MINICONDA_URLS[@]}"; do
         echo "  Downloading Miniconda from: $u"
-        if wget -q "$u" -O /tmp/miniconda.sh && [ -s /tmp/miniconda.sh ]; then
+        # --timeout=20 --tries=2：别让 wget 无响应时无限期挂着（之前就卡这）
+        # 不用 -q，显示进度条，能看出到底在下载还是真的断了
+        if wget --timeout=20 --tries=2 --show-progress "$u" -O /tmp/miniconda.sh && [ -s /tmp/miniconda.sh ]; then
             downloaded=1
             break
         fi
