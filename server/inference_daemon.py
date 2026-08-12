@@ -264,15 +264,16 @@ def main(q, done_q, cache_size):
         success, err = False, None
         try:
             device_pref = payload.get('device', 'auto')
+            cores = int(payload.get('max_cpu_cores') or 0)
             if device_pref == 'cpu':
                 device = 'cpu'
-                torch.set_num_threads(2)
+                torch.set_num_threads(cores if cores > 0 else 2)
             elif device_pref == 'cuda':
                 device = 'cuda' if torch.cuda.is_available() else 'cpu'
             else:
                 device = 'cuda' if torch.cuda.is_available() else 'cpu'
             if device == 'cpu':
-                torch.set_num_threads(2)
+                torch.set_num_threads(cores if cores > 0 else 2)
 
             # 实际设备写回 payload，参与缓存 key（避免 cuda/cpu 混用命中）
             payload = dict(payload)

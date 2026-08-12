@@ -36,7 +36,8 @@ class UserQuota(db.Model):
     max_queued_tasks = db.Column(db.Integer, default=4)
     max_running_tasks = db.Column(db.Integer, default=1)
     max_input_seconds = db.Column(db.Integer, default=600)
-    daily_audio_seconds = db.Column(db.Integer, default=3600)
+    max_daily_tasks = db.Column(db.Integer, default=50)
+    max_cpu_cores = db.Column(db.Integer, default=0)  # 0=不限制
     storage_quota_bytes = db.Column(db.BigInteger, default=10 * 1024 * 1024 * 1024)
     max_model_bytes = db.Column(db.BigInteger, default=4 * 1024 * 1024 * 1024)
     max_private_models = db.Column(db.Integer, default=3)
@@ -55,6 +56,7 @@ class Model(db.Model):
     version = db.Column(db.String(100), nullable=True)
     review_note = db.Column(db.String(500), nullable=True)
     reviewed_at = db.Column(db.DateTime, nullable=True)
+    public_requested = db.Column(db.Boolean, default=False)
 
     # File paths (relative to uploads/)
     model_path = db.Column(db.String(500), nullable=False)       # G_*.pth
@@ -140,7 +142,20 @@ class ServerSetting(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class Announcement(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    is_pinned = db.Column(db.Boolean, default=False)
+    is_active = db.Column(db.Boolean, default=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    author = db.relationship('User')
+
+
 class TrainingTask(db.Model):
+    """训练任务（可选功能：仅管理员使用，服务端开关控制）。"""
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     dataset_zip = db.Column(db.String(500), nullable=False)
@@ -159,8 +174,6 @@ class TrainingTask(db.Model):
     error_msg = db.Column(db.String(1000), nullable=True)
     log_path = db.Column(db.String(500), nullable=True)
     resume_from_id = db.Column(db.Integer, nullable=True)
-    anomaly_token = db.Column(db.String(64), nullable=True)
-    anomaly_state = db.Column(db.String(20), default='')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     done_at = db.Column(db.DateTime, nullable=True)
 
