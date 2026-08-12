@@ -363,7 +363,7 @@ def task_worker():
 
 
 def ensure_worker():
-    global task_worker_started, task_scheduler_started, inference_q, inference_done_q, inference_daemon_proc, cleanup_started, resource_monitor_started
+    global task_worker_started, task_scheduler_started, inference_q, inference_done_q, inference_daemon_proc, cleanup_started, resource_monitor_started, watchdog_started
     if inference_q is None:
         try:
             inference_q = mp_module.Queue()
