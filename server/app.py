@@ -128,7 +128,12 @@ def create_app():
                     return url_for(f'{prefix}.{endpoint}', **values)
                 except BuildError:
                     continue
-        raise error
+        # 找不到端点也返回安全链接而不是抛错：
+        # 不然“一键更新 git pull 后新模板配旧进程”的那几秒里，任何页面都 500
+        try:
+            return url_for('dashboard')
+        except Exception:
+            return '/'
 
     app.url_build_error_handlers.append(_resolve_blueprint_endpoint)
 

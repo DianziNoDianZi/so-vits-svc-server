@@ -380,19 +380,25 @@ def admin_update():
         flash(f'更新异常：{e}', 'danger')
         return redirect(url_for('admin_settings'))
 
-    if want_restart:
+    if want_restart and os.name != 'nt':
         import threading
         def _restart():
             import time as _t
-            _t.sleep(5)
+            _t.sleep(3)
             try:
-                if os.name != 'nt':
-                    _sp.run(['systemctl', 'restart', 'ssvc'], capture_output=True, timeout=60)
+                _sp.run(['systemctl', 'restart', 'ssvc'], capture_output=True, timeout=60)
             except Exception:
                 pass
         threading.Thread(target=_restart, daemon=True).start()
-        extra = '（Windows 无法自动重启，请手动重启服务）' if os.name == 'nt' else '，5 秒后自动重启'
-        flash('更新完成' + extra + '\n' + '\n'.join(output)[-1200:], 'success')
+        # 返回独立页面而不是跳管理页，避免更新后新旧代码混用的瞬间再渲染出错
+        return Response(
+            '<html><body style="background:#0d1117;color:#c9d1d9;font-family:sans-serif;'
+            'text-align:center;padding-top:15vh"><h2>更新完成，正在重启服务…</h2>'
+            '<p>约 5 秒后自动刷新；若没反应请手动刷新。</p>'
+            '<script>setTimeout(function(){location.href="/admin/settings"},6000)</script>'
+            '</body></html>', status=200)
+    if want_restart:
+        flash('更新完成（Windows 无法自动重启，请手动重启服务生效）：\n' + '\n'.join(output)[-1200:], 'success')
     else:
         flash('更新完成，请手动重启服务生效：\n' + '\n'.join(output)[-1200:], 'success')
     return redirect(url_for('admin_settings'))
