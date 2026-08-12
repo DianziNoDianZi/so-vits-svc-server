@@ -258,8 +258,12 @@ def task_worker():
                 import soundfile as sf
                 try:
                     audio_info = sf.info(audio_path)
-                    est_sec = INFERENCE_CLIP_SECONDS if INFERENCE_CLIP_SECONDS > 0 else 10
-                    estimated_total = max(int(audio_info.duration / est_sec) + 1, 1)
+                    if INFERENCE_CLIP_SECONDS > 0:
+                        # 切块是固定 clip_seconds 一刀，总段数 = ceil(时长/刀宽)，直接精确算
+                        import math as _math
+                        estimated_total = max(_math.ceil(audio_info.duration / INFERENCE_CLIP_SECONDS), 1)
+                    else:
+                        estimated_total = max(int(audio_info.duration / 10) + 1, 1)
                 except Exception:
                     estimated_total = 5
                 tail_lines = deque(maxlen=100)
@@ -307,8 +311,12 @@ def task_worker():
                             if not text:
                                 continue
                             tail_lines.append(text)
-                            # clip 切块后每小块会打 #=====segment clip start，两种行都算完成一段
-                            if '#=====segment start' in text or '=====segment clip start' in text:
+                            # 切块模式下每小块打 #=====segment clip start，只数小块，
+                            # 与上方按 ceil(时长/刀宽) 算出的总段数严格对齐；非切块才数大块行
+                            if INFERENCE_CLIP_SECONDS > 0:
+                                if '=====segment clip start' in text:
+                                    segments_done += 1
+                            elif '#=====segment start' in text:
                                 segments_done += 1
                     except OSError:
                         pass
