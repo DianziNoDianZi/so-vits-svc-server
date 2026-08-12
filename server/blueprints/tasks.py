@@ -18,6 +18,16 @@ def _current_upload():
     return current_app.config['UPLOAD_FOLDER']
 
 
+def _parse_pct(msg):
+    """从 progress_msg 解析百分比；None 表示没有可用的进度信息。"""
+    if not msg or '(' not in msg or '%' not in msg:
+        return None
+    try:
+        return msg.split('(')[1].split('%')[0].strip()
+    except Exception:
+        return None
+
+
 @bp.route('/tasks', endpoint='task_list')
 @login_required
 def task_list():
@@ -57,11 +67,19 @@ def task_list():
             model_name = '—'
         expired = (t.status == 'done' and t.result_expires_at and t.result_expires_at < now)
         queue_pos = global_queue_position(t) if t.status in ('pending', 'claimed') else 0
+        pct = _parse_pct(t.progress_msg)
+        # 有的任务 status 被调度器重置回 pending 但推理进程还在跑（progress_msg 一直更新），
+        # 列表页不能只信 status，否则会把"正在推理"显示成"排队中"。能解析出进度就当运行中显示。
+        inferring = t.status == 'running' or pct is not None
+        display_status = 'running' if inferring else t.status
         items.append({
             't': t, 'model': model_name,
-            'status_label': '已过期' if expired else status_label(t.status),
+            'status_label': '已过期' if expired else status_label(display_status),
             'queue_pos': queue_pos,
             'result_expires': t.result_expires_at,
+            'pct': pct,
+            'inferring': inferring,
+            'display_status': display_status,
             'can_download': t.status == 'done' and bool(t.result_filename) and not expired,
             'can_stop': t.status in ('pending', 'claimed', 'running'),
         })

@@ -57,7 +57,7 @@
             <div class="row align-items-center flex-wrap g-2">
                 <div class="col">
                     <div class="d-flex align-items-center">
-                        <span class="progress-dot dot-{{ t.status }}"></span>
+                        <span class="progress-dot dot-{{ item.display_status }}"></span>
                         <strong>#{{ t.id }}</strong>
                         <span class="text-secondary ms-2">{{ item.model }}</span>
                         <span class="badge bg-secondary ms-2">{{ item.status_label }}</span>
@@ -66,21 +66,20 @@
                         <small class="text-warning ms-2">前面还有 {{ item.queue_pos }} 个</small>
                         {% endif %}
                     </div>
-                    {% if t.status == 'pending' %}
+                    {% if item.inferring %}
+                    <div class="mt-2" id="task-{{ t.id }}" data-task-id="{{ t.id }}">
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span class="text-warning" id="tmsg-{{ t.id }}">{{ t.progress_msg or '正在推理...' }}</span>
+                            <span class="text-secondary" id="tpct-{{ t.id }}">{{ item.pct or '?' }}%</span>
+                        </div>
+                        <div style="height:6px;background:#21262d;border-radius:3px;overflow:hidden">
+                            <div id="tbar-{{ t.id }}" style="height:100%;width:{{ item.pct or 0 }}%;background:linear-gradient(90deg,#d29922,#e3b341);border-radius:3px;transition:width 0.5s"></div>
+                        </div>
+                    </div>
+                    {% elif t.status == 'pending' %}
                     <small class="text-secondary">排队中，等待调度...</small>
                     {% elif t.status == 'claimed' %}
                     <small class="text-warning">已领取，等待执行...</small>
-                    {% elif t.status == 'running' %}
-                    {% set pct = t.progress_msg.split('(')[1].split('%')[0] if '(' in t.progress_msg else '?' %}
-                    <div class="mt-2" id="task-{{ t.id }}" data-task-id="{{ t.id }}">
-                        <div class="d-flex justify-content-between small mb-1">
-                            <span class="text-warning" id="tmsg-{{ t.id }}">{{ t.progress_msg }}</span>
-                            <span class="text-secondary" id="tpct-{{ t.id }}">{{ pct }}%</span>
-                        </div>
-                        <div style="height:6px;background:#21262d;border-radius:3px;overflow:hidden">
-                            <div id="tbar-{{ t.id }}" style="height:100%;width:{{ pct if pct != '?' else 0 }}%;background:linear-gradient(90deg,#d29922,#e3b341);border-radius:3px;transition:width 0.5s"></div>
-                        </div>
-                    </div>
                     {% elif t.status == 'cancel_requested' %}
                     <small class="text-warning">正在停止（当前片段处理完即停）...</small>
                     {% elif t.status == 'done' %}
