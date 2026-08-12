@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>训练</h2>
+<p class="text-secondary small">可选功能（仅管理员）。上传数据集训练 SoVITS 模型，完成后可注册为推理模型。</p>
+
+<div class="row mt-3 g-3">
+    <div class="col-md-5">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h5 class="card-title">提交训练</h5>
+                <form method="POST" action="{{ url_for('train_submit') }}" enctype="multipart/form-data">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label">数据集 (zip)</label>
+                        <input type="file" name="dataset" class="form-control bg-dark text-light border-secondary" accept=".zip" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">说话人名称</label>
+                        <input type="text" name="speaker" class="form-control bg-dark text-light border-secondary" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label">模型类型</label>
+                            <select name="model_type" class="form-select bg-dark text-light border-secondary">
+                                <option value="sovits">SoVITS</option>
+                                <option value="sovits_diff">SoVITS + 扩散</option>
+                            </select>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label">F0 预测器</label>
+                            <select name="f0_predictor" class="form-select bg-dark text-light border-secondary">
+                                <option value="dio">dio</option>
+                                <option value="rmvpe">rmvpe</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-4 mb-3">
+                            <label class="form-label">Batch</label>
+                            <input type="number" name="batch_size" class="form-control bg-dark text-light border-secondary" value="4" min="1" max="8">
+                        </div>
+                        <div class="col-4 mb-3">
+                            <label class="form-label">总步数</label>
+                            <input type="number" name="total_steps" class="form-control bg-dark text-light border-secondary" value="4200" min="100">
+                        </div>
+                        <div class="col-4 mb-3">
+                            <label class="form-label">保留 ckpt</label>
+                            <input type="number" name="keep_ckpts" class="form-control bg-dark text-light border-secondary" value="3" min="1">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label">架构</label>
+                            <select name="arch" class="form-select bg-dark text-light border-secondary">
+                                <option value="sovits-v1">SoVITS v1</option>
+                                <option value="rvc">RVC</option>
+                                <option value="rvc-flow">RVC-Flow</option>
+                            </select>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Flow 模式</label>
+                            <select name="flow_mode" class="form-select bg-dark text-light border-secondary">
+                                <option value="a2">A2 后验流</option>
+                                <option value="a1">A1 特征先验流</option>
+                            </select>
+                        </div>
+                    </div>
+                    <details class="mb-3">
+                        <summary class="text-secondary small">⚙ 高级参数（可选）</summary>
+                        <div class="mt-2 small">
+                            <div class="row">
+                                <div class="col-6 mb-2">
+                                    <label class="form-label">语音编码器</label>
+                                    <select name="speech_encoder" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                        <option value="vec768l12">vec768l12</option>
+                                        <option value="vec256l9">vec256l9</option>
+                                        <option value="hubertsoft">hubertsoft</option>
+                                    </select>
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <label class="form-label">学习率</label>
+                                    <input type="number" name="learning_rate" step="0.0001" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.0001">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">c_mel</label>
+                                    <input type="number" name="c_mel" class="form-control form-control-sm bg-dark text-light border-secondary" value="45">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">c_kl</label>
+                                    <input type="number" name="c_kl" class="form-control form-control-sm bg-dark text-light border-secondary" value="1.0" step="0.1">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">c_fm</label>
+                                    <input type="number" name="c_fm" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.3" step="0.1">
+                                </div>
+                            </div>
+                            <div class="form-check mb-1">
+                                <input type="checkbox" name="use_unified_flow" value="on" class="form-check-input" id="uniFlow">
+                                <label class="form-check-label" for="uniFlow">统一流（仅 A2）</label>
+                            </div>
+                            <div class="form-check mb-1">
+                                <input type="checkbox" name="vol_aug" value="on" class="form-check-input" id="volAug">
+                                <label class="form-check-label" for="volAug">音量增强</label>
+                            </div>
+                        </div>
+                    </details>
+                    <button type="submit" class="btn btn-primary w-100">提交训练</button>
+                </form>
+            </div>
+        </div>
+
+        {% if active %}
+        <div class="card bg-dark border-secondary mt-3">
+            <div class="card-body">
+                <h5 class="card-title">当前训练 #{{ active.id }} <span class="text-warning">{{ stage_label }}</span></h5>
+                <div class="d-flex justify-content-between small mb-1">
+                    <span class="text-warning" id="trmsg">{{ active.progress_msg }}</span>
+                    <span id="trpct">{{ pct }}%</span>
+                </div>
+                <div style="height:6px;background:#21262d;border-radius:3px;overflow:hidden">
+                    <div id="trbar" style="height:100%;width:{{ pct }}%;background:linear-gradient(90deg,#d29922,#e3b341);transition:width .5s"></div>
+                </div>
+                <div class="text-secondary small mt-2" id="trstep">step {{ current_step }} / {{ total_steps }}</div>
+                <form method="POST" action="{{ url_for('train_stop') }}" class="mt-2">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-outline-warning btn-sm" onclick="return confirm('停止当前训练？')">停止训练</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-md-7">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">历史训练任务（{{ history|length }}）</h5>
+                    <span class="text-secondary small">排队 {{ queued }} · 完成 {{ done_count }}</span>
+                </div>
+                {% if history %}
+                <table class="table table-dark table-striped mt-2 mb-0">
+                    <thead><tr><th>#</th><th>说话人</th><th>类型</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+                    <tbody>
+                    {% for t in history %}
+                    <tr>
+                        <td>#{{ t.id }}</td>
+                        <td>{{ t.speaker }}</td>
+                        <td>{{ t.model_type }}</td>
+                        <td>{{ t.status }}</td>
+                        <td>{{ t.created_at.strftime('%m-%d %H:%M') }}</td>
+                        <td>
+                            {% if t.status == 'done' and t.model_path %}
+                            <a href="{{ url_for('train_result', tid=t.id) }}" class="btn btn-sm btn-outline-info">模型</a>
+                            {% endif %}
+                            {% if t.status in ('done','failed','stopped') %}
+                            <form method="POST" action="{{ url_for('train_quick_resume') }}" style="display:inline">
+                                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="resume_from" value="{{ t.id }}">
+                                <button class="btn btn-sm btn-outline-warning">续训</button>
+                            </form>
+                            {% endif %}
+                            {% if t.log_path %}
+                            <a href="{{ url_for('train_log', tid=t.id) }}" class="btn btn-sm btn-outline-secondary" target="_blank">日志</a>
+                            {% endif %}
+                            {% if t.status == 'done' %}
+                            <button class="btn btn-sm btn-outline-success" onclick="regCkpt({{ t.id }})">注册模型</button>
+                            {% endif %}
+                            {% if t.status != 'running' %}
+                            <form method="POST" action="{{ url_for('train_task_delete', tid=t.id) }}" style="display:inline">
+                                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-outline-danger" onclick="return confirm('删除训练任务？')">删除</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-secondary text-center py-3 mb-0">还没有训练任务</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function regCkpt(tid) {
+    var body = new FormData();
+    body.append('_csrf_token', document.querySelector('input[name=_csrf_token]').value);
+    fetch('/api/train/' + tid + '/register_checkpoints', {method: 'POST', body: body})
+        .then(function(r){ return r.json(); })
+        .then(function(d){ alert(d.msg || '完成'); })
+        .catch(function(){ alert('注册失败'); });
+}
+(function() {
+    {% if active %}
+    var tid = {{ active.id }};
+    var timer = setInterval(function() {
+        fetch('/api/train/' + tid + '/status').then(function(r){ return r.json(); }).then(function(d) {
+            document.getElementById('trmsg').textContent = d.progress_msg || '';
+            document.getElementById('trpct').textContent = d.pct + '%';
+            document.getElementById('trbar').style.width = (d.pct || 0) + '%';
+            document.getElementById('trstep').textContent = 'step ' + d.current_step + ' / ' + d.total_steps;
+            if (d.status !== 'running') { clearInterval(timer); setTimeout(function(){ location.reload(); }, 1500); }
+        }).catch(function(){});
+    }, 3000);
+    {% endif %}
+})();
+</script>
+{% endblock %}

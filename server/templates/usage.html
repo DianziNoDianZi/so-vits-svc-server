@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>我的用量</h2>
+
+<div class="row mt-3 g-2">
+    <div class="col-md-4">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">今日任务</div>
+                <div class="fs-4">{{ used_today }}<span class="text-secondary fs-6"> / {{ quota.max_daily_tasks }}</span></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">进行中/排队</div>
+                <div class="fs-4">{{ running_cnt + queued_cnt }}<span class="text-secondary fs-6"> / {{ quota.max_queued_tasks }}</span></div>
+                <div class="text-secondary small">运行 {{ running_cnt }} · 排队 {{ queued_cnt }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">私有模型</div>
+                <div class="fs-4">{{ private_cnt }}<span class="text-secondary fs-6"> / {{ quota.max_private_models }}</span></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="card-title">存储与限额</h5>
+        <table class="table table-dark table-striped mb-0">
+            <tbody>
+                <tr><td style="width:160px">磁盘占用</td><td>{{ '%.1f'|format(storage_bytes / 1048576) }} MB{% if storage_limit %} <span class="text-secondary">/ {{ '%.1f'|format(storage_limit / 1073741824) }} GB</span>{% endif %}</td></tr>
+                <tr><td>单音频时长上限</td><td>{{ quota.max_input_seconds }} 秒</td></tr>
+                <tr><td>CPU 核心上限</td><td>{{ quota.max_cpu_cores if quota.max_cpu_cores else '不限制' }}</td></tr>
+                <tr><td>结果保留</td><td>{{ quota.results_retention_days }} 天</td></tr>
+                <tr><td>优先级</td><td>{{ quota.priority }}</td></tr>
+                <tr><td>账号状态</td><td>{{ '可提交' if quota.enabled else '已禁用' }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

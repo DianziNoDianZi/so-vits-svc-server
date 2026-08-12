@@ -20,16 +20,24 @@
                     <span class="nav-item nav-link text-secondary">{{ current_user.username }}</span>
                     <a class="nav-link" href="{{ url_for('dashboard') }}">首页</a>
                     <a class="nav-link" href="{{ url_for('model_list') }}">模型</a>
-                    <a class="nav-link" href="{{ url_for('config_list') }}">配置</a>
                     <a class="nav-link" href="{{ url_for('inference') }}">推理</a>
                     <a class="nav-link" href="{{ url_for('task_list') }}">任务</a>
+                    <a class="nav-link" href="{{ url_for('usage') }}">用量</a>
                     {% if current_user.role == 'admin' %}
-                    <a class="nav-link" href="{{ url_for('admin_index') }}">管理</a>
-                    <a class="nav-link" href="{{ url_for('admin_users') }}">用户</a>
-                    <a class="nav-link" href="{{ url_for('admin_models') }}">模型</a>
-                    <a class="nav-link" href="{{ url_for('admin_tasks') }}">任务</a>
-                    <a class="nav-link" href="{{ url_for('admin_storage') }}">存储</a>
-                    <a class="nav-link" href="{{ url_for('admin_settings') }}">设置</a>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown" role="button" aria-expanded="false">管理</a>
+                        <ul class="dropdown-menu dropdown-menu-end bg-dark border-secondary">
+                            <li><a class="dropdown-item text-light" href="{{ url_for('admin_index') }}">总览</a></li>
+                            <li><a class="dropdown-item text-light" href="{{ url_for('admin_users') }}">用户与配额</a></li>
+                            <li><a class="dropdown-item text-light" href="{{ url_for('admin_models') }}">模型审核</a></li>
+                            <li><a class="dropdown-item text-light" href="{{ url_for('admin_tasks') }}">任务队列</a></li>
+                            <li><a class="dropdown-item text-light" href="{{ url_for('admin_storage') }}">存储清理</a></li>
+                            <li><a class="dropdown-item text-light" href="{{ url_for('admin_announcements') }}">公告</a></li>
+                            <li><a class="dropdown-item text-light" href="{{ url_for('admin_settings') }}">站点设置</a></li>
+                            <li><hr class="dropdown-divider border-secondary"></li>
+                            <li><a class="dropdown-item text-light" href="{{ url_for('train_page') }}">训练</a></li>
+                        </ul>
+                    </li>
                     {% endif %}
                     <a class="nav-link" href="{{ url_for('settings') }}">设置</a>
                     <a class="nav-link" href="{{ url_for('logout') }}">退出</a>
@@ -40,6 +48,12 @@
     </nav>
 
     <div class="container mt-4">
+        {% if resource_warning and resource_warning.active %}
+        <div class="alert alert-danger" role="alert" id="resourceWarning">
+            <strong>⚠ {{ resource_warning.message }}</strong>
+            <button type="button" class="btn-close float-end" onclick="document.getElementById('resourceWarning').style.display='none'"></button>
+        </div>
+        {% endif %}
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
             {% for category, message in messages %}

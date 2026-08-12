@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2>任务详情 #{{ t.id }}</h2>
+    <a href="{{ url_for('task_list') }}" class="btn btn-sm btn-outline-secondary">返回列表</a>
+</div>
+
+<div class="row mt-3 g-3">
+    <div class="col-md-7">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h5 class="card-title">基本信息</h5>
+                <table class="table table-dark table-striped mb-0">
+                    <tbody>
+                        <tr><td style="width:140px">状态</td><td>{{ status_label }}</td></tr>
+                        <tr><td>模型</td><td>{{ model }}</td></tr>
+                        <tr><td>配置</td><td>{{ config }}</td></tr>
+                        <tr><td>输入音频</td><td>{{ t.audio_filename }}</td></tr>
+                        <tr><td>输入时长</td><td>{{ '%.1f'|format(t.input_duration or 0) }} 秒</td></tr>
+                        <tr><td>提交时间</td><td>{{ t.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td></tr>
+                        {% if t.done_at %}<tr><td>完成时间</td><td>{{ t.done_at.strftime('%Y-%m-%d %H:%M:%S') }}</td></tr>{% endif %}
+                        {% if t.result_expires_at %}<tr><td>结果保留至</td><td>{{ t.result_expires_at.strftime('%Y-%m-%d %H:%M:%S') }}</td></tr>{% endif %}
+                        <tr><td>进度</td><td>{{ t.progress_msg or '—' }}</td></tr>
+                        {% if t.error_msg %}<tr><td>错误详情</td><td class="text-danger" style="word-break:break-all">{{ t.error_msg }}</td></tr>{% endif %}
+                    </tbody>
+                </table>
+                {% if can_download %}
+                <a href="{{ url_for('task_result', task_id=t.id) }}" class="btn btn-success mt-3">⬇ 下载结果</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-5">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h5 class="card-title">推理参数</h5>
+                {% if params %}
+                <table class="table table-dark table-striped mb-0">
+                    <tbody>
+                    {% for k, v in params.items() %}
+                        <tr><td style="width:140px">{{ k }}</td><td>{{ v }}</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-secondary mb-0">无自定义参数</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -11,10 +11,12 @@
                 <th>启用</th>
                 <th>排队/运行</th>
                 <th>私有模型</th>
+                <th>磁盘占用</th>
                 <th>最大排队</th>
                 <th>最大运行</th>
                 <th>单音频秒数</th>
-                <th>每日音频秒数</th>
+                <th>每日任务数</th>
+                <th>CPU核心</th>
                 <th>最大私有模型</th>
                 <th>结果保留(天)</th>
                 <th>优先级</th>
@@ -41,10 +43,12 @@
                     </td>
                     <td>{{ item.queued }}</td>
                     <td>{{ item.private_models }}</td>
+                    <td>{{ '%.1f'|format(item.storage_bytes / 1048576) }} MB</td>
                     <td><input type="number" name="max_queued_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_queued_tasks }}" min="0"></td>
                     <td><input type="number" name="max_running_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_running_tasks }}" min="0"></td>
                     <td><input type="number" name="max_input_seconds" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_input_seconds }}" min="0"></td>
-                    <td><input type="number" name="daily_audio_seconds" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.daily_audio_seconds }}" min="0"></td>
+                    <td><input type="number" name="max_daily_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_daily_tasks }}" min="0"></td>
+                    <td><input type="number" name="max_cpu_cores" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_cpu_cores }}" min="0" title="0=不限制"></td>
                     <td><input type="number" name="max_private_models" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_private_models }}" min="0"></td>
                     <td><input type="number" name="results_retention_days" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.results_retention_days }}" min="1"></td>
                     <td><input type="number" name="priority" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.priority }}" min="0"></td>

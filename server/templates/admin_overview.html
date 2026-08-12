@@ -1,9 +1,62 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>管理总览</h2>
+<div class="d-flex justify-content-between align-items-center">
+    <h2 class="mb-0">管理总览</h2>
+    <div>
+        <a href="{{ url_for('admin_models') }}" class="btn btn-sm btn-outline-primary">模型审核</a>
+        <a href="{{ url_for('admin_users') }}" class="btn btn-sm btn-outline-secondary">用户配额</a>
+        <a href="{{ url_for('admin_settings') }}" class="btn btn-sm btn-outline-secondary">站点设置</a>
+    </div>
+</div>
 
-<div class="row mt-4 g-2">
+{% if stats.pending_models %}
+<div class="alert alert-warning mt-3 py-2 small mb-0">
+    ⚠ 有 <strong>{{ stats.pending_models }}</strong> 个用户上传的模型等待审核
+    <a href="{{ url_for('admin_models') }}" class="alert-link">去审核</a>
+</div>
+{% endif %}
+
+<div class="row mt-3 g-2">
     <div class="col-md-3">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body text-center py-2">
+                <div class="text-secondary small">推理 daemon</div>
+                <div class="{{ 'text-success' if health.daemon_alive else 'text-danger' }}">{{ '运行中' if health.daemon_alive else '已停止' }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body text-center py-2">
+                <div class="text-secondary small">GPU</div>
+                <div>{{ '✅ 可用' if health.gpu == '可用' else '❌ 不可用' }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body text-center py-2">
+                <div class="text-secondary small">全局排队</div>
+                <div>{{ health.queue_depth }} 个</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body text-center py-2">
+                <div class="text-secondary small">新任务调度</div>
+                <div class="{{ 'text-warning' if health.paused else 'text-success' }}">{{ '已暂停' if health.paused else '正常' }}</div>
+                <form method="POST" action="{{ url_for('admin_tasks_pause') }}" class="mt-1">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm {{ 'btn-success' if health.paused else 'btn-outline-warning' }}">{{ '恢复' if health.paused else '暂停' }}</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3 g-2">
+    <a class="col-md-3 text-decoration-none" href="{{ url_for('admin_users') }}">
         <div class="card bg-dark border-secondary h-100">
             <div class="card-body text-center">
                 <div class="text-secondary small">用户</div>
@@ -11,8 +64,8 @@
                 <div class="text-secondary small">启用 {{ stats.active_users }}</div>
             </div>
         </div>
-    </div>
-    <div class="col-md-3">
+    </a>
+    <a class="col-md-3 text-decoration-none" href="{{ url_for('admin_tasks') }}">
         <div class="card bg-dark border-secondary h-100">
             <div class="card-body text-center">
                 <div class="text-secondary small">排队/运行任务</div>
@@ -20,8 +73,8 @@
                 <div class="text-secondary small">排队 {{ stats.pending }} · 领取 {{ stats.claimed }} · 运行 {{ stats.running }}</div>
             </div>
         </div>
-    </div>
-    <div class="col-md-3">
+    </a>
+    <a class="col-md-3 text-decoration-none" href="{{ url_for('admin_tasks') }}">
         <div class="card bg-dark border-secondary h-100">
             <div class="card-body text-center">
                 <div class="text-secondary small">今日任务</div>
@@ -29,8 +82,8 @@
                 <div class="text-secondary small">完成 {{ stats.done_today }} · 失败 {{ stats.failed_today }}</div>
             </div>
         </div>
-    </div>
-    <div class="col-md-3">
+    </a>
+    <a class="col-md-3 text-decoration-none" href="{{ url_for('admin_models') }}">
         <div class="card bg-dark border-secondary h-100">
             <div class="card-body text-center">
                 <div class="text-secondary small">模型</div>
@@ -38,16 +91,19 @@
                 <div class="text-secondary small">官方 {{ stats.official_models }} · 待审核 {{ stats.pending_models }}</div>
             </div>
         </div>
-    </div>
+    </a>
 </div>
 
 <div class="row mt-3 g-2">
     <div class="col-md-6">
         <div class="card bg-dark border-secondary h-100">
             <div class="card-body">
-                <h5 class="card-title">当前运行/领取任务</h5>
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">当前运行/领取任务</h5>
+                    <a href="{{ url_for('admin_tasks') }}" class="btn btn-sm btn-outline-secondary">全部队列</a>
+                </div>
                 {% if running_tasks %}
-                <table class="table table-dark table-striped mb-0">
+                <table class="table table-dark table-striped mb-0 mt-2">
                     <thead><tr><th>#</th><th>用户</th><th>模型</th><th>状态</th><th>提交时间</th></tr></thead>
                     <tbody>
                     {% for t in running_tasks %}
@@ -70,17 +126,18 @@
     <div class="col-md-6">
         <div class="card bg-dark border-secondary h-100">
             <div class="card-body">
-                <h5 class="card-title">上传目录磁盘占用</h5>
-                <table class="table table-dark table-striped mb-0">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">磁盘占用</h5>
+                    <a href="{{ url_for('admin_storage') }}" class="btn btn-sm btn-outline-secondary">存储与孤儿文件</a>
+                </div>
+                <table class="table table-dark table-striped mb-0 mt-2">
                     <tbody>
                     <tr><td>模型文件</td><td>{{ '%.1f'|format(disk.models) }} MB</td></tr>
                     <tr><td>配置文件</td><td>{{ '%.1f'|format(disk.configs) }} MB</td></tr>
                     <tr><td>输入音频</td><td>{{ '%.1f'|format(disk.audio) }} MB</td></tr>
                     <tr><td>推理结果</td><td>{{ '%.1f'|format(disk.results) }} MB</td></tr>
-                    <tr><td>训练遗留</td><td>{{ '%.1f'|format(disk.dataset_zips + disk.train_data) }} MB</td></tr>
                     </tbody>
                 </table>
-                <a href="{{ url_for('admin_storage') }}" class="btn btn-sm btn-outline-secondary mt-2">存储与孤儿文件</a>
             </div>
         </div>
     </div>

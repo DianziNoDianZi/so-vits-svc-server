@@ -28,8 +28,12 @@
                         <input type="number" name="default_max_input_seconds" class="form-control bg-dark text-light border-secondary" value="{{ site.default_max_input_seconds }}" min="0">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">新用户每日音频秒数</label>
-                        <input type="number" name="default_daily_audio_seconds" class="form-control bg-dark text-light border-secondary" value="{{ site.default_daily_audio_seconds }}" min="0">
+                        <label class="form-label">新用户每日可提交任务数</label>
+                        <input type="number" name="default_max_daily_tasks" class="form-control bg-dark text-light border-secondary" value="{{ site.default_max_daily_tasks }}" min="0">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">新用户 CPU 核心上限 <small class="text-secondary">（0=不限制）</small></label>
+                        <input type="number" name="default_max_cpu_cores" class="form-control bg-dark text-light border-secondary" value="{{ site.default_max_cpu_cores }}" min="0">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">新用户私有模型上限</label>
@@ -78,6 +82,31 @@
                     </div>
                     <button type="submit" class="btn btn-primary w-100 mb-2">保存配置</button>
                     <button type="submit" name="action" value="test" class="btn btn-outline-info w-100">发送测试邮件</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3 g-3">
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h5 class="card-title text-center mb-4">训练功能（可选模块）</h5>
+                <p class="text-secondary small text-center mb-3">仅管理员可用。开启后可上传数据集训练 SoVITS 模型。</p>
+                <form method="POST">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="train">
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" name="training_enabled" value="on" class="form-check-input" id="trainEn"
+                               {{ 'checked' if train.enabled else '' }}>
+                        <label class="form-check-label" for="trainEn">启用训练功能</label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">训练 CPU 核心数 <small class="text-secondary">（0=自动）</small></label>
+                        <input type="number" name="train_cpu_cores" class="form-control bg-dark text-light border-secondary" value="{{ train.cpu_cores }}" min="0">
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">保存</button>
                 </form>
             </div>
         </div>

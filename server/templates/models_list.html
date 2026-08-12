@@ -2,7 +2,10 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
     <h2>模型</h2>
-    <a href="{{ url_for('model_upload') }}" class="btn btn-primary">上传模型</a>
+    <div>
+        <a href="{{ url_for('config_list') }}" class="btn btn-outline-secondary">我的推理配置</a>
+        <a href="{{ url_for('model_upload') }}" class="btn btn-primary">上传模型</a>
+    </div>
 </div>
 
 {% if model_items %}
@@ -41,11 +44,18 @@
                 <td>
                     <span class="badge {{ 'bg-success' if item.m.status == 'ready' else ('bg-warning text-dark' if item.m.status == 'pending_review' else ('bg-danger' if item.m.status == 'rejected' else 'bg-secondary')) }}">{{ item.m.status }}</span>
                     <span class="badge {{ 'bg-primary' if item.visibility == 'official' else 'bg-dark' }} ms-1">{{ '官方' if item.visibility == 'official' else '我的' }}</span>
+                    {% if item.m.public_requested %}<span class="badge bg-info text-dark ms-1">已申请公开</span>{% endif %}
                 </td>
                 <td><small>{{ item.m.created_at.strftime('%m-%d %H:%M') }}</small></td>
                 <td>
                     {% if item.can_manage %}
                     <a href="{{ url_for('model_edit', model_id=item.m.id) }}" class="btn btn-sm btn-outline-secondary">编辑</a>
+                    {% if item.m.visibility == 'private' and item.m.status == 'ready' and not item.m.public_requested %}
+                    <form method="POST" action="{{ url_for('model_request_public', model_id=item.m.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-info" onclick="return confirm('申请将该模型设为公开（所有人可用）？')">申请公开</button>
+                    </form>
+                    {% endif %}
                     <form method="POST" action="{{ url_for('model_export_onnx', model_id=item.m.id) }}" style="display:inline">
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-sm btn-outline-info" onclick="return confirm('导出 ONNX（主生成器）？推理将自动用 onnxruntime 加速，耗时约 1 分钟')">{{ '重新导出' if item.onnx else '导出 ONNX' }}</button>

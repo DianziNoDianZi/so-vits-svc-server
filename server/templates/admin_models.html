@@ -18,11 +18,30 @@
                 <td>{{ item.m.name }}</td>
                 <td>{{ item.owner }}</td>
                 <td>{{ item.arch_label }}</td>
-                <td>{{ item.visibility }}</td>
-                <td>{{ item.status }}</td>
+                <td>{{ item.visibility }}{% if item.m.public_requested %} <span class="badge bg-info text-dark">申请公开</span>{% endif %}</td>
+                <td>{{ item.status }}
+                    {% if item.valid %}
+                    <span class="badge bg-success">校验通过</span>
+                    {% else %}
+                    <span class="badge bg-warning text-dark" title="{{ item.issues|join('；') }}">⚠ 警告</span>
+                    {% endif %}
+                </td>
                 <td>{{ item.m.created_at.strftime('%m-%d %H:%M') }}</td>
                 <td>
-                    {% if item.status == 'pending_review' %}
+                    <a href="{{ url_for('admin_model_file', model_id=item.m.id, attr='model') }}" class="btn btn-sm btn-outline-info" title="下载模型权重">权重</a>
+                    <a href="{{ url_for('admin_model_file', model_id=item.m.id, attr='config') }}" class="btn btn-sm btn-outline-info" title="下载配置文件">配置</a>
+                    {% if item.m.public_requested %}
+                    <form method="POST" action="{{ url_for('model_review', model_id=item.m.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="approve">
+                        <button class="btn btn-sm btn-outline-success" onclick="return confirm('通过公开申请 #{{ item.m.id }}？（设为官方，所有人可用）')">通过公开</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('model_review', model_id=item.m.id) }}" style="display:inline">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="reject">
+                        <button class="btn btn-sm btn-outline-danger" onclick="return confirm('拒绝 #{{ item.m.id }}？该模型将被删除！')">拒绝(删除)</button>
+                    </form>
+                    {% elif item.status == 'pending_review' %}
                     <form method="POST" action="{{ url_for('model_review', model_id=item.m.id) }}" style="display:inline">
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="action" value="approve">
@@ -31,7 +50,7 @@
                     <form method="POST" action="{{ url_for('model_review', model_id=item.m.id) }}" style="display:inline">
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="action" value="reject">
-                        <button class="btn btn-sm btn-outline-warning" onclick="return confirm('拒绝 #{{ item.m.id }}？')">拒绝</button>
+                        <button class="btn btn-sm btn-outline-warning" onclick="return confirm('拒绝 #{{ item.m.id }}？该模型将被删除！')">拒绝(删除)</button>
                     </form>
                     {% endif %}
                     {% if item.status == 'ready' and item.visibility == 'official' %}
