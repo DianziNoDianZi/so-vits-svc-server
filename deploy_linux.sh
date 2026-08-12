@@ -60,8 +60,26 @@ fi
 # === 3. Install Miniconda ===
 echo "[2/5] Installing Miniconda..."
 if [ ! -d "$CONDA_DIR" ]; then
-    wget -q "https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh" \
-        -O /tmp/miniconda.sh || { echo "[ERROR] Miniconda download failed"; exit 1; }
+    MINICONDA_URLS=(
+        "https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+        "https://mirrors.aliyun.com/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+        "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+    )
+    downloaded=0
+    for u in "${MINICONDA_URLS[@]}"; do
+        echo "  Downloading Miniconda from: $u"
+        if wget -q "$u" -O /tmp/miniconda.sh && [ -s /tmp/miniconda.sh ]; then
+            downloaded=1
+            break
+        fi
+    done
+    if [ "$downloaded" != "1" ]; then
+        echo "[ERROR] Miniconda download failed from all mirrors."
+        echo "        Please download it manually:"
+        echo "        https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+        echo "        then run:  bash <下载的脚本> -b -p $CONDA_DIR"
+        exit 1
+    fi
     bash /tmp/miniconda.sh -b -p "$CONDA_DIR"
     rm -f /tmp/miniconda.sh
 fi
