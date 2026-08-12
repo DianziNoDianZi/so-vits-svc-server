@@ -447,6 +447,50 @@ def admin_email_templates():
     return render_template('admin_email_templates.html', templates=templates)
 
 
+PRETRAIN_FILES = [
+    ('contentvec', 'checkpoint_best_legacy_500.pt', 'ContentVec 编码器（推理必需）'),
+    ('nsf_model', 'nsf_hifigan/model', 'NSF-HiFiGAN 声码器（推理必需）'),
+    ('nsf_config', 'nsf_hifigan/config.json', 'NSF-HiFiGAN 配置'),
+    ('g0', 'G_0.pth', 'SoVITS 生成器底模（训练用）'),
+    ('d0', 'D_0.pth', 'SoVITS 判别器底模（训练用）'),
+    ('rmvpe', 'rmvpe.pt', 'RMVPE F0 预测器（训练/推理）'),
+    ('hubertsoft', 'hubert-soft-0d54a1f4.pt', 'HuBERTSoft 编码器（可选）'),
+]
+
+
+def _pretrain_dir():
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'pretrain')
+
+
+@bp.route('/admin/pretrain', methods=['GET', 'POST'], endpoint='admin_pretrain')
+@login_required
+def admin_pretrain():
+    """预训练模型管理（仅管理员）：网页上传/替换 pretrain/ 下的文件。"""
+    _guard()
+    pdir = _pretrain_dir()
+    if request.method == 'POST':
+        saved = 0
+        for key, rel, _label in PRETRAIN_FILES:
+            f = request.files.get(f'file_{key}')
+            if f and f.filename:
+                dest = os.path.join(pdir, rel)
+                os.makedirs(os.path.dirname(dest) or pdir, exist_ok=True)
+                f.save(dest)
+                saved += 1
+        extra = request.files.get('extra_file')
+        if extra and extra.filename:
+            extra.save(os.path.join(pdir, os.path.basename(extra.filename)))
+            saved += 1
+        flash(f'已上传 {saved} 个文件', 'success')
+        return redirect(url_for('admin_pretrain'))
+    items = []
+    for key, rel, label in PRETRAIN_FILES:
+        full = os.path.join(pdir, rel)
+        size = os.path.getsize(full) if os.path.isfile(full) else 0
+        items.append({'key': key, 'rel': rel, 'label': label, 'exists': size > 0, 'size_mb': size / 1048576})
+    return render_template('admin_pretrain.html', items=items)
+
+
 @bp.route('/admin/settings', methods=['GET', 'POST'], endpoint='admin_settings')
 @login_required
 def admin_settings():
