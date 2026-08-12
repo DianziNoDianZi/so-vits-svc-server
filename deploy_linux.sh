@@ -61,16 +61,15 @@ fi
 echo "[2/5] Installing Miniconda..."
 if [ ! -d "$CONDA_DIR" ]; then
     MINICONDA_URLS=(
-        "https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh"
-        "https://mirrors.aliyun.com/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh"
         "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+        "https://mirrors.ustc.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+        "https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh"
     )
     downloaded=0
     for u in "${MINICONDA_URLS[@]}"; do
         echo "  Downloading Miniconda from: $u"
-        # --timeout=20 --tries=2：别让 wget 无响应时无限期挂着（之前就卡这）
-        # 不用 -q，显示进度条，能看出到底在下载还是真的断了
-        if wget --timeout=20 --tries=2 --show-progress "$u" -O /tmp/miniconda.sh && [ -s /tmp/miniconda.sh ]; then
+        # 加超时防止无响应无限挂；加浏览器 UA 绕开部分镜像（如 USTC）对 wget 默认 UA 的 403
+        if wget --timeout=25 --tries=2 --user-agent="Mozilla/5.0" --show-progress "$u" -O /tmp/miniconda.sh && [ -s /tmp/miniconda.sh ]; then
             downloaded=1
             break
         fi
