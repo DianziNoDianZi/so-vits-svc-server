@@ -256,20 +256,15 @@ def task_worker():
 
                 prog_path = result_path + '.prog'
                 import soundfile as sf
+                audio_duration = None
                 try:
-                    audio_info = sf.info(audio_path)
-                    if INFERENCE_CLIP_SECONDS > 0:
-                        # 切块是固定 clip_seconds 一刀，总段数 = ceil(时长/刀宽)，直接精确算
-                        import math as _math
-                        estimated_total = max(_math.ceil(audio_info.duration / INFERENCE_CLIP_SECONDS), 1)
-                    else:
-                        estimated_total = max(int(audio_info.duration / 10) + 1, 1)
+                    audio_duration = sf.info(audio_path).duration
                 except Exception:
-                    estimated_total = 5
+                    audio_duration = None
                 tail_lines = deque(maxlen=100)
                 started_at = time.time()
                 task_timeout = int(os.environ.get('INFERENCE_TASK_TIMEOUT', str(6 * 3600)))
-                est_total_fixed = estimated_total
+                processed_sec = 0.0
                 result_ok = False
                 result_err = None
                 hb_count = 0
@@ -311,18 +306,26 @@ def task_worker():
                             if not text:
                                 continue
                             tail_lines.append(text)
-                            # 切块模式下每小块打 #=====segment clip start，只数小块，
-                            # 与上方按 ceil(时长/刀宽) 算出的总段数严格对齐；非切块才数大块行
-                            if INFERENCE_CLIP_SECONDS > 0:
-                                if '=====segment clip start' in text:
-                                    segments_done += 1
-                            elif '#=====segment start' in text:
-                                segments_done += 1
+                            # 日志行格式：#=====segment start, 8.82s====== 或
+                            # ###=====segment clip start, 14.5s======。每行带该段真实时长（秒）。
+                            # 切块模式下真正处理的是 clip 小块，只累加 clip 行的时长；
+                            # 非切块模式才用大块行。这样进度 = 已处理秒数/总秒数，精确不依赖段数。
+                            _clip = '=====segment clip start' in text
+                            _big = '#=====segment start' in text and not _clip
+                            if (_clip and INFERENCE_CLIP_SECONDS > 0) or (_big and INFERENCE_CLIP_SECONDS <= 0):
+                                try:
+                                    _sec = text.split(', ')[1].split('s===')[0].strip()
+                                    processed_sec += float(_sec)
+                                except Exception:
+                                    pass
                     except OSError:
                         pass
                     if prog_exists:
-                        base_pct = min(int(segments_done * 100 / max(est_total_fixed, 1)), 99)
-                        _update_progress(task, f'推理中 ({base_pct}%) — 已处理 {segments_done} 段')
+                        if audio_duration and audio_duration > 0:
+                            base_pct = min(int(processed_sec * 100 / audio_duration), 99)
+                            _update_progress(task, f'推理中 ({base_pct}%) — 已处理 {processed_sec:.1f}s / {audio_duration:.1f}s')
+                        else:
+                            _update_progress(task, f'正在推理中 (已处理 {processed_sec:.1f}s)...')
                     else:
                         _update_progress(task, '正在加载模型/等待推理...')
                     try:
