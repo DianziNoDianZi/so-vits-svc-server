@@ -365,6 +365,18 @@ def admin_update():
     want_restart = request.form.get('restart') == 'on'
     # admin.py 在 server/server/blueprints/ 下，仓库根是再上两级
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    # 先查本地是否有未提交改动：有就直接拒绝，否则 pull 会变 merge 把代码拉混
+    try:
+        st = _sp.run(['git', 'status', '--porcelain'], cwd=root, capture_output=True, text=True, timeout=30)
+        if (st.stdout or '').strip():
+            changed = ' '.join(line[:60] for line in st.stdout.strip().splitlines()[:5])
+            flash(f'本地有未提交的改动，拒绝更新（否则会拉混代码）：\n{changed}\n'
+                  '请在服务器 SSH 里处理：git status 查看；确认可丢弃用 git checkout . ；要保留则 git add + commit', 'danger')
+            return redirect(url_for('admin_settings'))
+    except Exception as e:
+        flash(f'检查本地改动失败：{e}', 'danger')
+        return redirect(url_for('admin_settings'))
+
     output = []
     try:
         cmd = ['git', 'pull'] + ([repo_url] if repo_url else [])
