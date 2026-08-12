@@ -524,7 +524,7 @@ def admin_settings():
             flash('测试邮件已发送，请检查收件箱' if ok else '测试发送失败，请检查 SMTP 配置', 'success' if ok else 'danger')
             return redirect(url_for('admin_settings'))
         if request.form.get('action') == 'site':
-            set_setting('allow_registration', '1' if request.form.get('allow_registration') == 'on' else '0')
+            set_setting('allow_registration', '1' if request.form.get('allow_registration') else '0')
             set_setting('default_max_queued', request.form.get('default_max_queued', '4'))
             set_setting('default_max_running', request.form.get('default_max_running', '1'))
             set_setting('default_max_input_seconds', request.form.get('default_max_input_seconds', '600'))
