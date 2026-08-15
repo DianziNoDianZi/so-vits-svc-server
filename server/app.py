@@ -119,11 +119,12 @@ def create_app():
     from blueprints.training import bp as train_bp
     from blueprints.health import bp as health_bp
     from blueprints.api import bp as api_bp
-    for _b in (auth_bp, dash_bp, models_bp, configs_bp, infer_bp, tasks_bp, ann_bp, admin_bp, train_bp, health_bp, api_bp):
+    from blueprints.status import bp as status_bp
+    for _b in (auth_bp, dash_bp, models_bp, configs_bp, infer_bp, tasks_bp, ann_bp, admin_bp, train_bp, health_bp, api_bp, status_bp):
         app.register_blueprint(_b)
 
     # 模板里用无前缀 endpoint（url_for('login') 等），蓝图端点实际带前缀，这里做回退映射
-    _blueprint_prefixes = ['auth', 'dashboard', 'models', 'configs', 'inference', 'tasks', 'announcements', 'admin', 'training', 'health', 'api']
+    _blueprint_prefixes = ['auth', 'dashboard', 'models', 'configs', 'inference', 'tasks', 'announcements', 'admin', 'training', 'health', 'api', 'status']
 
     def _resolve_blueprint_endpoint(error, endpoint, values):
         if isinstance(error, BuildError) and '.' not in endpoint:
@@ -160,12 +161,12 @@ def create_app():
 
     @app.before_request
     def _protect_csrf():
-        if request.method == 'POST':
-            # 对外 API 走 Bearer token，无会话 cookie，豁免 CSRF；健康检查带 Authorization 同样豁免
-            if request.path.startswith('/api/') or request.headers.get('Authorization'):
+        if request.method in ('POST', 'DELETE', 'PUT', 'PATCH'):
+            # 对外 API 走 API Key（X-API-Key 或 Authorization: Bearer），无会话 cookie，豁免 CSRF
+            if request.path.startswith('/api/') or request.headers.get('X-API-Key') or request.headers.get('Authorization'):
                 return
             token = session.get('_csrf_token')
-            form_token = request.form.get('_csrf_token', '')
+            form_token = request.form.get('_csrf_token', '') or request.headers.get('X-CSRF-Token', '')
             if not token or not form_token or not hmac.compare_digest(token, form_token):
                 abort(400, description='CSRF 校验失败，请刷新页面后重试')
 

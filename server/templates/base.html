@@ -24,12 +24,14 @@
                     <a class="nav-link" href="{{ url_for('inference') }}" data-nav="inference"><i class="bi bi-magic"></i> 推理</a>
                     <a class="nav-link" href="{{ url_for('task_list') }}" data-nav="tasks"><i class="bi bi-list-task"></i> 任务</a>
                     <a class="nav-link" href="{{ url_for('usage') }}" data-nav="usage"><i class="bi bi-graph-up-arrow"></i> 用量</a>
+                    <a class="nav-link" href="{{ url_for('status') }}" data-nav="status"><i class="bi bi-heart-pulse"></i> 状态</a>
                     {% if current_user.role == 'admin' %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown" role="button" aria-expanded="false" data-nav="admin"><i class="bi bi-shield-lock"></i> 管理</a>
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="{{ url_for('admin_index') }}"><i class="bi bi-grid me-2"></i>总览</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin_users') }}"><i class="bi bi-people me-2"></i>用户与配额</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('admin_invites') }}"><i class="bi bi-ticket me-2"></i>邀请码</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin_models') }}"><i class="bi bi-box-seam me-2"></i>模型审核</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin_tasks') }}"><i class="bi bi-list-check me-2"></i>任务队列</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin_storage') }}"><i class="bi bi-hdd me-2"></i>存储清理</a></li>
