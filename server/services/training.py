@@ -67,6 +67,38 @@ def _run_training(task):
     task.log_path = f'task_{task.id}.log'
     db.session.commit()
 
+    # 训练进度邮件监控：按 report_interval 步发一封进度报告（0=关闭）
+    # 任务级参数优先（训练页可设），无则用用户默认
+    report_interval = int(params.get('report_interval') or getattr(task.user, 'report_interval', 0) or 0)
+    _progress_stop = threading.Event()
+    _progress_thread = None
+
+    def _progress_monitor():
+        last_report_step = 0
+        while not _progress_stop.wait(20):
+            try:
+                info = parse_training_log(task)
+                step = info.get('current_step') or 0
+                if report_interval <= 0 or step - last_report_step < report_interval:
+                    continue
+                if step <= 0:
+                    continue
+                last_report_step = step
+                from notifier import notify_train_progress
+                notify_train_progress(
+                    task,
+                    os.environ.get('SSVC_SERVER_URL', 'http://127.0.0.1:5000'),
+                    step=step, total_steps=info.get('total_steps') or task.total_steps,
+                    losses=info.get('last_loss', '-'),
+                    stage=info.get('stage') or '-',
+                )
+            except Exception:
+                pass
+
+    if report_interval > 0:
+        _progress_thread = threading.Thread(target=_progress_monitor, daemon=True)
+        _progress_thread.start()
+
     from train_worker import run as train_run
 
     old_omp = os.environ.get('OMP_NUM_THREADS')
@@ -149,6 +181,13 @@ def _run_training(task):
     task.diff_config_path = result.get('diff_config_path') or None
     task.done_at = datetime.utcnow()
     db.session.commit()
+
+    _progress_stop.set()
+    try:
+        from notifier import notify_train_complete
+        notify_train_complete(task, os.environ.get('SSVC_SERVER_URL', 'http://127.0.0.1:5000'))
+    except Exception:
+        pass
 
 
 def stop_training():
@@ -234,4 +273,13 @@ def parse_training_log(task):
             info['loss_data'].append(point)
     info['current_step'] = info['loss_data'][-1]['step'] if info['loss_data'] else 0
     info['pct'] = min(int(info['current_step'] * 100 / max(total_steps, 1)), 99) if total_steps else 0
+    if info['loss_data']:
+        last = info['loss_data'][-1]
+        parts = []
+        for k in ('g', 'd', 'fm', 'mel'):
+            if last.get(k) is not None:
+                parts.append(f'{k}={last[k]:.4f}')
+        info['last_loss'] = ', '.join(parts) or '-'
+    else:
+        info['last_loss'] = '-'
     return info

@@ -35,17 +35,21 @@
                         </div>
                     </div>
                     <div class="row">
-                        <div class="col-4 mb-3">
+                        <div class="col-3 mb-3">
                             <label class="form-label">Batch</label>
                             <input type="number" name="batch_size" class="form-control bg-dark text-light border-secondary" value="4" min="1" max="8">
                         </div>
-                        <div class="col-4 mb-3">
+                        <div class="col-3 mb-3">
                             <label class="form-label">总步数</label>
                             <input type="number" name="total_steps" class="form-control bg-dark text-light border-secondary" value="4200" min="100">
                         </div>
-                        <div class="col-4 mb-3">
+                        <div class="col-3 mb-3">
                             <label class="form-label">保留 ckpt</label>
                             <input type="number" name="keep_ckpts" class="form-control bg-dark text-light border-secondary" value="3" min="1">
+                        </div>
+                        <div class="col-3 mb-3">
+                            <label class="form-label">进度邮件间隔 <small class="text-secondary">（步，0=关）</small></label>
+                            <input type="number" name="report_interval" class="form-control bg-dark text-light border-secondary" value="0" min="0">
                         </div>
                     </div>
                     <div class="row">

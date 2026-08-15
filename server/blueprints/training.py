@@ -120,6 +120,7 @@ def train_submit():
         'diff_decay_step': _i('diff_decay_step', 100000), 'diff_gamma': _f('diff_gamma', 0.5),
         'diff_amp': request.form.get('diff_amp', 'fp32'),
         'diff_interval_val': _i('diff_interval_val', 200), 'diff_max_steps': _i('diff_max_steps', 0),
+        'report_interval': _i('report_interval', getattr(current_user, 'report_interval', 0) or 0),
     }
     task = TrainingTask(
         user_id=current_user.id, dataset_zip=dataset_zip, speaker=speaker,

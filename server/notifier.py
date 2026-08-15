@@ -27,6 +27,18 @@ DEFAULT_TEMPLATES = {
         'subject': '[SoVITS] {title}',
         'body': '{title}\n\n{content}\n\n--- So-VITS-SVC 推理服务 ---',
     },
+    'train_progress': {
+        'subject': '[SoVITS] 训练进度: {speaker} (step {step})',
+        'body': '训练进度报告\n\n说话人: {speaker}\n类型: {model_type}\n当前: step {step} / {total_steps}\n阶段: {stage}\nETA: {eta}\n最新 Loss: {losses}\n\n--- So-VITS-SVC 推理服务 ---',
+    },
+    'train_done': {
+        'subject': '[SoVITS] 训练{status_cn}: {speaker}',
+        'body': '训练任务已完成\n\n说话人: {speaker}\n类型: {model_type}\n状态: {status_cn}\n用时: {duration}\n步数: {total_steps}\n\nSoVITS 模型: {model_link}\nSoVITS 配置: {cfg_link}\n扩散模型: {diff_link}\n扩散配置: {diff_cfg_link}\n\n--- So-VITS-SVC 推理服务 ---',
+    },
+    'train_failed': {
+        'subject': '[SoVITS] 训练失败: {speaker}',
+        'body': '训练任务失败\n\n说话人: {speaker}\n类型: {model_type}\n状态: {status_cn}\n错误: {error}\n\n--- So-VITS-SVC 推理服务 ---',
+    },
 }
 
 
@@ -169,5 +181,69 @@ def notify_welcome(user):
         return False
     subject, body = render_email('welcome', username=user.username, recipient=recipient)
     return send_via_server(recipient, subject, body)
+
+
+def _train_recipient(task):
+    user = task.user if task else None
+    if not user:
+        return None, None
+    recipient = getattr(user, 'notify_email', None) or user.email
+    return user, recipient
+
+
+def notify_train_progress(task, server_url, step, total_steps, losses='-', stage='-', eta='-'):
+    """训练过程中按 report_interval 步发送进度邮件。"""
+    user, recipient = _train_recipient(task)
+    if not user or not recipient:
+        return False
+    try:
+        subject, body = render_email('train_progress', speaker=task.speaker,
+                                     model_type=task.model_type, step=step,
+                                     total_steps=total_steps or '?', stage=stage or '-',
+                                     eta=eta or '-', losses=losses or '-', username=user.username)
+        cfg = _server_smtp_config()
+        if cfg:
+            return send(recipient, cfg['user'], cfg['pwd'], subject, body,
+                        host=cfg['host'], port=cfg['port'], from_addr=cfg['from'])
+        return send(recipient, user.smtp_user, user.smtp_pwd, subject, body,
+                    host=user.smtp_host or None, port=user.smtp_port or None)
+    except Exception:
+        return False
+
+
+def notify_train_complete(task, server_url):
+    """训练完成/失败时发送邮件。"""
+    user, recipient = _train_recipient(task)
+    if not user or not recipient:
+        return False
+    status_cn = '成功' if task.status == 'done' else '失败'
+    model_link = f'{server_url}/train/result/{task.id}' if task.model_path else '无'
+    cfg_link = f'{server_url}/train/result/{task.id}?config=1' if task.config_path else '无'
+    diff_link = f'{server_url}/train/result/{task.id}?diff=1' if task.diff_model_path else '无'
+    diff_cfg_link = f'{server_url}/train/result/{task.id}?diff=1&config=1' if task.diff_config_path else '无'
+    dur = ''
+    if task.created_at and task.done_at:
+        secs = int((task.done_at - task.created_at).total_seconds())
+        dur = f'{secs // 3600}h{(secs % 3600) // 60}m' if secs > 3600 else f'{secs // 60}m{secs % 60}s'
+    if task.status == 'done':
+        key = 'train_done'
+        kw = dict(speaker=task.speaker, model_type=task.model_type, status_cn=status_cn,
+                  duration=dur, total_steps=task.total_steps or 0,
+                  model_link=model_link, cfg_link=cfg_link, diff_link=diff_link, diff_cfg_link=diff_cfg_link,
+                  username=user.username)
+    else:
+        key = 'train_failed'
+        kw = dict(speaker=task.speaker, model_type=task.model_type, status_cn=status_cn,
+                  error=task.error_msg or '-', username=user.username)
+    try:
+        subject, body = render_email(key, **kw)
+        cfg = _server_smtp_config()
+        if cfg:
+            return send(recipient, cfg['user'], cfg['pwd'], subject, body,
+                        host=cfg['host'], port=cfg['port'], from_addr=cfg['from'])
+        return send(recipient, user.smtp_user, user.smtp_pwd, subject, body,
+                    host=user.smtp_host or None, port=user.smtp_port or None)
+    except Exception:
+        return False
 
 
