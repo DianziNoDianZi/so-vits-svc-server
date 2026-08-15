@@ -284,6 +284,12 @@
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <button class="btn btn-outline-danger btn-sm" onclick="return confirm('确定强制重启整个服务器？\\n\\n将终止所有残留训练/推理子进程，服务重启约 5 秒。')">⚠ 强制重启服务器</button>
                 </form>
+                {% if active.log_path %}
+                <details class="mt-2">
+                    <summary class="text-secondary small">📄 训练日志（实时）</summary>
+                    <pre id="train-log" class="bg-black text-success p-2 rounded mt-2 mb-0" style="max-height:280px;overflow:auto;font-size:12px;">{{ log_content }}</pre>
+                </details>
+                {% endif %}
             </div>
         </div>
         {% endif %}
@@ -402,12 +408,19 @@ function regCkpt(tid) {
         }
     }
     mkCharts({{ loss_data | safe }});
+    var logEl = document.getElementById('train-log');
+    var lastLogLen = logEl ? logEl.textContent.length : 0;
     var timer = setInterval(function() {
         fetch('/api/train/' + tid + '/status').then(function(r){ return r.json(); }).then(function(d) {
             document.getElementById('trmsg').textContent = d.progress_msg || '';
             document.getElementById('trpct').textContent = d.pct + '%';
             document.getElementById('trbar').style.width = (d.pct || 0) + '%';
             document.getElementById('trstep').textContent = 'step ' + d.current_step + ' / ' + d.total_steps;
+            if (logEl && d.log_tail) {
+                logEl.textContent = d.log_tail;
+                if (d.log_tail.length >= lastLogLen) logEl.scrollTop = logEl.scrollHeight;
+                lastLogLen = d.log_tail.length;
+            }
             if (d.status !== 'running') { clearInterval(timer); setTimeout(function(){ location.reload(); }, 1500); }
         }).catch(function(){});
         fetch('/api/train/' + tid + '/loss_chart.json').then(function(r){ return r.json(); }).then(function(d) {
