@@ -665,7 +665,8 @@ class SynthesizerTrn(nn.Module):
         # nsf decoder
         o = self.dec(z_slice, g=g, f0=pitch_slice)
 
-        return o, ids_slice, spec_mask, (z, z_p, m_p, logs_p, m_q, logs_q), pred_lf0, norm_lf0, lf0
+        # 末尾补 loss_flow_match=0，保持与 train.py 的 8 元组解包一致（统一流才非 0）
+        return o, ids_slice, spec_mask, (z, z_p, m_p, logs_p, m_q, logs_q), pred_lf0, norm_lf0, lf0, 0
 
     @torch.no_grad()
     def infer(self, c, f0, uv, g=None, noice_scale=0.35, seed=52468, predict_f0=False, vol = None):
@@ -811,7 +812,8 @@ class SynthesizerTrnRvc(nn.Module):
         o = self.dec(x_slice, g=g, f0=pitch_slice)
 
         # 无 flow：占位返回，train.py 中 loss_kl 按 z_p is None 处理为 0
-        return o, ids_slice, x_mask, (None, None, None, None, None, None), 0, 0, 0
+        # 末尾补 loss_flow_match=0，保持 8 元组解包一致
+        return o, ids_slice, x_mask, (None, None, None, None, None, None), 0, 0, 0, 0
 
     @torch.no_grad()
     def infer(self, c, f0, uv, g=None, noice_scale=0.35, seed=52468, predict_f0=False, vol=None):
