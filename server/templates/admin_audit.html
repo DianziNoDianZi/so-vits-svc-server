@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2 class="mb-0">审计日志</h2>
+    <a href="{{ url_for('admin_index') }}" class="btn btn-sm btn-outline-secondary">返回总览</a>
+</div>
+
+<form method="GET" class="row g-2 mt-3">
+    <div class="col-auto">
+        <select name="action" class="form-select form-select-sm bg-dark text-light border-secondary">
+            <option value="">全部操作</option>
+            {% for a in actions %}
+            <option value="{{ a }}" {{ 'selected' if a == cur_action }}>{{ a }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <button class="btn btn-sm btn-primary">筛选</button>
+    </div>
+    <div class="col-auto align-self-center text-secondary small">共 {{ total }} 条</div>
+</form>
+
+{% if rows %}
+<div class="card bg-dark border-secondary mt-3">
+    <div class="table-responsive">
+        <table class="table table-dark table-striped mb-0 align-middle">
+            <thead><tr><th>时间</th><th>操作人</th><th>操作</th><th>详情</th><th>IP</th></tr></thead>
+            <tbody>
+            {% for r in rows %}
+            <tr>
+                <td class="text-secondary small">{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                <td>{{ r.user.username if r.user else '系统' }}</td>
+                <td><span class="badge bg-secondary">{{ r.action }}</span></td>
+                <td class="small">{{ r.detail or '' }}</td>
+                <td class="text-secondary small">{{ r.ip or '' }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% if pages > 1 %}
+<nav class="mt-2">
+    <ul class="pagination pagination-sm justify-content-center mb-0">
+        {% set _params = '?action=' ~ cur_action if cur_action else '' %}
+        <li class="page-item {{ 'disabled' if page <= 1 }}">
+            <a class="page-link bg-dark text-light border-secondary" href="{{ url_for('admin_audit') }}{{ _params }}&page={{ page - 1 }}">上一页</a>
+        </li>
+        {% for p in range(1, pages + 1) %}
+        <li class="page-item {{ 'active' if p == page }}">
+            <a class="page-link {{ 'bg-primary border-primary' if p == page else 'bg-dark text-light border-secondary' }}" href="{{ url_for('admin_audit') }}{{ _params }}&page={{ p }}">{{ p }}</a>
+        </li>
+        {% endfor %}
+        <li class="page-item {{ 'disabled' if page >= pages }}">
+            <a class="page-link bg-dark text-light border-secondary" href="{{ url_for('admin_audit') }}{{ _params }}&page={{ page + 1 }}">下一页</a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+{% else %}
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body text-center py-5">
+        <p class="text-secondary mb-0">暂无审计记录</p>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

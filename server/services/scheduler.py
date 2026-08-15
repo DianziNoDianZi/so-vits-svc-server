@@ -40,6 +40,7 @@ scheduler_lock = threading.Lock()
 cleanup_started = False
 resource_monitor_started = False
 watchdog_started = False
+backup_started = False
 resource_warning = {'active': False, 'message': ''}
 
 inference_q = None
@@ -375,7 +376,7 @@ def task_worker():
 
 
 def ensure_worker():
-    global task_worker_started, task_scheduler_started, inference_q, inference_done_q, inference_daemon_proc, cleanup_started, resource_monitor_started, watchdog_started
+    global task_worker_started, task_scheduler_started, inference_q, inference_done_q, inference_daemon_proc, cleanup_started, resource_monitor_started, watchdog_started, backup_started
     if inference_q is None:
         try:
             inference_q = mp_module.Queue()
@@ -410,6 +411,11 @@ def ensure_worker():
     if not watchdog_started:
         watchdog_started = True
         threading.Thread(target=_watchdog_daemon, daemon=True).start()
+    if not backup_started:
+        backup_started = True
+        from services import backup as _backup
+        _backup.init_app(_app)
+        threading.Thread(target=_backup._backup_daemon, daemon=True).start()
 
 
 def _recover_tasks():

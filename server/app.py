@@ -105,6 +105,8 @@ def create_app():
     app.config.from_object(Config)
     db.init_app(app)
     login_manager.init_app(app)
+    from services.logging_setup import setup_logging
+    setup_logging(app)
 
     from blueprints.auth import bp as auth_bp
     from blueprints.dashboard import bp as dash_bp
@@ -115,11 +117,13 @@ def create_app():
     from blueprints.announcements import bp as ann_bp
     from blueprints.admin import bp as admin_bp
     from blueprints.training import bp as train_bp
-    for _b in (auth_bp, dash_bp, models_bp, configs_bp, infer_bp, tasks_bp, ann_bp, admin_bp, train_bp):
+    from blueprints.health import bp as health_bp
+    from blueprints.api import bp as api_bp
+    for _b in (auth_bp, dash_bp, models_bp, configs_bp, infer_bp, tasks_bp, ann_bp, admin_bp, train_bp, health_bp, api_bp):
         app.register_blueprint(_b)
 
     # 模板里用无前缀 endpoint（url_for('login') 等），蓝图端点实际带前缀，这里做回退映射
-    _blueprint_prefixes = ['auth', 'dashboard', 'models', 'configs', 'inference', 'tasks', 'announcements', 'admin', 'training']
+    _blueprint_prefixes = ['auth', 'dashboard', 'models', 'configs', 'inference', 'tasks', 'announcements', 'admin', 'training', 'health', 'api']
 
     def _resolve_blueprint_endpoint(error, endpoint, values):
         if isinstance(error, BuildError) and '.' not in endpoint:
@@ -157,6 +161,9 @@ def create_app():
     @app.before_request
     def _protect_csrf():
         if request.method == 'POST':
+            # 对外 API 走 Bearer token，无会话 cookie，豁免 CSRF；健康检查带 Authorization 同样豁免
+            if request.path.startswith('/api/') or request.headers.get('Authorization'):
+                return
             token = session.get('_csrf_token')
             form_token = request.form.get('_csrf_token', '')
             if not token or not form_token or not hmac.compare_digest(token, form_token):
@@ -191,6 +198,9 @@ if __name__ == '__main__':
     scheduler._recover_tasks()
     training.ensure_training_worker()
     port = int(os.environ.get('PORT', 5000))
+    # waitress 访问日志太吵，压到 WARNING；异常仍会进结构化日志
+    import logging as _logging
+    _logging.getLogger('waitress').setLevel(_logging.WARNING)
     try:
         from waitress import serve
         serve(app, host='0.0.0.0', port=port, threads=8)

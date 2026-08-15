@@ -95,7 +95,20 @@ def admin_index():
         'paused': get_setting('scheduler_paused', '0') == '1',
         'queue_depth': Task.query.filter(Task.status.in_(['pending', 'claimed'])).count(),
     }
-    return render_template('admin_overview.html', stats=stats, running_tasks=running_tasks, disk=disk, health=health)
+    from services.backup import backup_dir
+    backups = []
+    if os.path.isdir(backup_dir()):
+        for f in sorted(os.listdir(backup_dir()), reverse=True):
+            if f.startswith('backup_') and f.endswith('.db'):
+                p = os.path.join(backup_dir(), f)
+                try:
+                    backups.append({'name': f, 'mtime': datetime.fromtimestamp(os.path.getmtime(p))})
+                except OSError:
+                    pass
+    return render_template('admin_overview.html', stats=stats, running_tasks=running_tasks, disk=disk, health=health,
+                           backups=backups[:20],
+                           backup_interval_hours=get_setting('backup_interval_hours', 24),
+                           backup_keep=get_setting('backup_keep', 10))
 
 
 @bp.route('/admin/users', endpoint='admin_users')
@@ -143,6 +156,9 @@ def admin_update_quota(uid):
     u.is_active = request.form.get('active') == 'on'
     u.role = 'admin' if request.form.get('is_admin') == 'on' else 'user'
     db.session.commit()
+    from services.audit import audit_log
+    audit_log('update_quota', f'用户 {u.username}: 排队={q.max_queued_tasks} 运行={q.max_running_tasks} '
+                              f'日任务={q.max_daily_tasks} 输入秒={q.max_input_seconds} 启用={u.is_active} 角色={u.role}')
     flash(f'已更新用户 {u.username} 的配额', 'success')
     return redirect(url_for('admin_users'))
 
@@ -231,6 +247,8 @@ def admin_task_stop(task_id):
         flash(f'已停止任务 #{task_id}', 'warning')
     else:
         flash('该任务不在运行/排队中', 'info')
+    from services.audit import audit_log
+    audit_log('task_stop', f'管理员停止任务 #{task_id}')
     return redirect(url_for('admin_tasks'))
 
 
@@ -250,6 +268,8 @@ def admin_task_delete(task_id):
                 pass
     db.session.delete(t)
     db.session.commit()
+    from services.audit import audit_log
+    audit_log('task_delete', f'管理员删除任务 #{task_id}')
     flash(f'已删除任务 #{task_id}', 'success')
     return redirect(url_for('admin_tasks'))
 
@@ -392,6 +412,8 @@ def admin_update():
         flash(f'更新异常：{e}', 'danger')
         return redirect(url_for('admin_settings'))
 
+    from services.audit import audit_log
+    audit_log('update', f'管理员一键更新完成，重启={want_restart}')
     if want_restart and os.name != 'nt':
         import threading
         def _restart():
@@ -532,6 +554,9 @@ def admin_settings():
             set_setting('default_max_cpu_cores', request.form.get('default_max_cpu_cores', '0'))
             set_setting('default_max_private_models', request.form.get('default_max_private_models', '3'))
             set_setting('default_result_retention_days', request.form.get('default_result_retention_days', '7'))
+            from services.audit import audit_log
+            audit_log('settings_site', f'站点设置已保存: 开放注册={get_setting("allow_registration")} '
+                                       f'邀请码模式={get_setting("invite_mode", "off")}')
             flash('站点设置已保存（对新注册用户生效）', 'success')
             return redirect(url_for('admin_settings'))
         if request.form.get('action') == 'train':
@@ -602,6 +627,8 @@ def admin_announcements_create():
         flash(f'公告已发布，邮件已发送给 {sent} 位用户', 'success')
     else:
         flash('公告已发布', 'success')
+    from services.audit import audit_log
+    audit_log('announcement_create', f'发布公告: {title}')
     return redirect(url_for('admin_announcements'))
 
 
@@ -614,6 +641,8 @@ def admin_announcements_toggle(aid):
         abort(404)
     a.is_active = not a.is_active
     db.session.commit()
+    from services.audit import audit_log
+    audit_log('announcement_toggle', f'公告 #{aid} {"下架" if not a.is_active else "上架"}')
     flash('公告已上/下架', 'success')
     return redirect(url_for('admin_announcements'))
 
@@ -627,5 +656,55 @@ def admin_announcements_delete(aid):
         abort(404)
     db.session.delete(a)
     db.session.commit()
+    from services.audit import audit_log
+    audit_log('announcement_delete', f'删除公告 #{aid}')
     flash('公告已删除', 'success')
     return redirect(url_for('admin_announcements'))
+
+
+@bp.route('/admin/audit', endpoint='admin_audit')
+@login_required
+def admin_audit():
+    _guard()
+    from db_models import AuditLog
+    action = request.args.get('action', '').strip()
+    page = max(request.args.get('page', 1, type=int), 1)
+    per_page = 50
+    q = AuditLog.query
+    if action:
+        q = q.filter(AuditLog.action == action)
+    total = q.count()
+    pages = max((total + per_page - 1) // per_page, 1)
+    page = min(page, pages)
+    rows = (q.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            .offset((page - 1) * per_page).limit(per_page).all())
+    actions = [r[0] for r in db.session.query(AuditLog.action).distinct().order_by(AuditLog.action.asc()).all()]
+    return render_template('admin_audit.html', rows=rows, actions=actions, cur_action=action,
+                           page=page, pages=pages, total=total)
+
+
+@bp.route('/admin/backup', methods=['POST'], endpoint='admin_backup')
+@login_required
+def admin_backup():
+    _guard()
+    from services.backup import do_backup
+    from services.audit import audit_log
+    fname = do_backup()
+    if fname:
+        audit_log('backup', f'管理员手动备份: {fname}')
+        flash(f'备份完成: {fname}', 'success')
+    else:
+        flash('备份失败，请检查磁盘空间或权限', 'danger')
+    return redirect(url_for('admin_index'))
+
+
+@bp.route('/admin/backup/download/<path:filename>', endpoint='admin_backup_download')
+@login_required
+def admin_backup_download(filename):
+    _guard()
+    from services.backup import backup_dir
+    from werkzeug.utils import safe_join
+    full = safe_join(backup_dir(), os.path.basename(filename))
+    if not os.path.exists(full):
+        abort(404)
+    return send_file(full, as_attachment=True, download_name=os.path.basename(filename))

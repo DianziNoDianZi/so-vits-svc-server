@@ -154,6 +154,17 @@ class Announcement(db.Model):
     author = db.relationship('User')
 
 
+class AuditLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    action = db.Column(db.String(60), nullable=False)
+    detail = db.Column(db.String(1000), nullable=True)
+    ip = db.Column(db.String(64), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User')
+
+
 class TrainingTask(db.Model):
     """训练任务（可选功能：仅管理员使用，服务端开关控制）。"""
     id = db.Column(db.Integer, primary_key=True)

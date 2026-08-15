@@ -250,6 +250,8 @@ def model_review(model_id):
     else:
         abort(400)
     db.session.commit()
+    from services.audit import audit_log
+    audit_log('model_review', f'模型 #{m.id} {m.name} 操作: {action}，备注: {note or "—"}')
     return redirect(url_for('admin_models'))
 
 
