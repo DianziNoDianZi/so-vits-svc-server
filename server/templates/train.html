@@ -104,6 +104,148 @@
                                 <input type="checkbox" name="vol_aug" value="on" class="form-check-input" id="volAug">
                                 <label class="form-check-label" for="volAug">音量增强</label>
                             </div>
+                            <hr class="border-secondary my-2">
+                            <h6 class="text-secondary">基础训练</h6>
+                            <div class="row">
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">segment_size</label>
+                                    <input type="number" name="segment_size" class="form-control form-control-sm bg-dark text-light border-secondary" value="10240">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">lr_decay</label>
+                                    <input type="number" name="lr_decay" step="0.000001" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.999875">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">warmup_epochs</label>
+                                    <input type="number" name="warmup_epochs" class="form-control form-control-sm bg-dark text-light border-secondary" value="0">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">auto_stop <small class="text-secondary">（loss 无改善早停）</small></label>
+                                    <input type="number" name="auto_stop" class="form-control form-control-sm bg-dark text-light border-secondary" value="200">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">log_interval</label>
+                                    <input type="number" name="log_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="200">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">eval_interval</label>
+                                    <input type="number" name="eval_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="800">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">ema_decay</label>
+                                    <input type="number" name="ema_decay" step="0.0001" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.999">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">ema_interval</label>
+                                    <input type="number" name="ema_interval" class="form-control form-control-sm bg-dark text-light border-secondary" value="100">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">seed</label>
+                                    <input type="number" name="seed" class="form-control form-control-sm bg-dark text-light border-secondary" value="1234">
+                                </div>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input type="checkbox" name="fp16_run" value="on" class="form-check-input" id="fp16Run">
+                                <label class="form-check-label" for="fp16Run">fp16 训练（GPU）</label>
+                            </div>
+                            <hr class="border-secondary my-2">
+                            <h6 class="text-secondary">模型结构（RVC-Flow）</h6>
+                            <div class="row">
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">max_speclen</label>
+                                    <input type="number" name="max_speclen" class="form-control form-control-sm bg-dark text-light border-secondary" value="512">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">enc_q_hidden</label>
+                                    <input type="number" name="enc_q_hidden" class="form-control form-control-sm bg-dark text-light border-secondary" value="96">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">n_layers_q</label>
+                                    <input type="number" name="n_layers_q" class="form-control form-control-sm bg-dark text-light border-secondary" value="3">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-6 mb-2">
+                                    <label class="form-label">hybrid_steps（统一流推理步数）</label>
+                                    <input type="number" name="hybrid_steps" class="form-control form-control-sm bg-dark text-light border-secondary" value="4">
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <label class="form-label">d_lr_scale <small class="text-secondary">（判别器学习率缩放）</small></label>
+                                    <input type="number" name="d_lr_scale" step="0.1" class="form-control form-control-sm bg-dark text-light border-secondary" value="1.0">
+                                </div>
+                            </div>
+                            <hr class="border-secondary my-2">
+                            <h6 class="text-secondary">扩散（SoVITS+扩散）</h6>
+                            <div class="row">
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_batch_size</label>
+                                    <input type="number" name="diff_batch_size" class="form-control form-control-sm bg-dark text-light border-secondary" value="48">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_epochs</label>
+                                    <input type="number" name="diff_epochs" class="form-control form-control-sm bg-dark text-light border-secondary" value="100000">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_timesteps</label>
+                                    <input type="number" name="diff_timesteps" class="form-control form-control-sm bg-dark text-light border-secondary" value="1000">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_kstep <small class="text-secondary">（0=全量）</small></label>
+                                    <input type="number" name="diff_kstep" class="form-control form-control-sm bg-dark text-light border-secondary" value="0">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_lr</label>
+                                    <input type="number" name="diff_lr" step="0.00001" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.0001">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_layers</label>
+                                    <input type="number" name="diff_layers" class="form-control form-control-sm bg-dark text-light border-secondary" value="20">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_chans</label>
+                                    <input type="number" name="diff_chans" class="form-control form-control-sm bg-dark text-light border-secondary" value="512">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_hidden</label>
+                                    <input type="number" name="diff_hidden" class="form-control form-control-sm bg-dark text-light border-secondary" value="256">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_amp</label>
+                                    <select name="diff_amp" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                        <option value="fp32">fp32</option>
+                                        <option value="fp16">fp16</option>
+                                        <option value="bf16">bf16</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_decay_step</label>
+                                    <input type="number" name="diff_decay_step" class="form-control form-control-sm bg-dark text-light border-secondary" value="100000">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_gamma</label>
+                                    <input type="number" name="diff_gamma" step="0.1" class="form-control form-control-sm bg-dark text-light border-secondary" value="0.5">
+                                </div>
+                                <div class="col-4 mb-2">
+                                    <label class="form-label">diff_interval_val</label>
+                                    <input type="number" name="diff_interval_val" class="form-control form-control-sm bg-dark text-light border-secondary" value="200">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-6 mb-2">
+                                    <label class="form-label">diff_max_steps <small class="text-secondary">（0=不限）</small></label>
+                                    <input type="number" name="diff_max_steps" class="form-control form-control-sm bg-dark text-light border-secondary" value="0">
+                                </div>
+                            </div>
                         </div>
                     </details>
                     <button type="submit" class="btn btn-primary w-100">提交训练</button>

@@ -110,6 +110,7 @@ def train_submit():
         'ema_interval': _i('ema_interval', 100), 'max_speclen': _i('max_speclen', 512),
         'seed': _i('seed', 1234), 'n_layers_q': _i('n_layers_q', 3),
         'hybrid_steps': _i('hybrid_steps', 4), 'enc_q_hidden': _i('enc_q_hidden', 96),
+        'd_lr_scale': _f('d_lr_scale', 1.0),
         'vol_aug': request.form.get('vol_aug') == 'on', 'warmup_epochs': _i('warmup_epochs', 0),
         'fp16_run': request.form.get('fp16_run') if request.form.get('fp16_run') else None,
         'diff_batch_size': _i('diff_batch_size', 48), 'diff_epochs': _i('diff_epochs', 100000),
