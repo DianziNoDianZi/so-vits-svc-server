@@ -202,20 +202,35 @@ def parse_training_log(task):
     tail = ''.join(lines[-40:])
     info['log_tail'] = tail
     info['stage'] = detect_stage(tail[-2000:])
-    # 解析损失行，如 "step 100 | G: 5.2 | D: 1.3 | mel: 0.41"
+    # 训练脚本实际格式：Losses: [D, G, FM, mel, KL], step: N, lr: ...
+    # 兼容旧格式：step 100 | G: 5.2 | D: 1.3 | mel: 0.41
     for line in lines:
-        m = _re.search(r'step\s+(\d+)', line)
-        g = _re.search(r'G:\s*([\d.]+)', line)
-        d = _re.search(r'D:\s*([\d.]+)', line)
-        mel = _re.search(r'mel:\s*([\d.]+)', line)
-        if m and (g or d):
-            point = {'step': int(m.group(1))}
-            if g:
-                point['g'] = float(g.group(1))
-            if d:
-                point['d'] = float(d.group(1))
-            if mel:
-                point['mel'] = float(mel.group(1))
+        point = None
+        m = _re.search(r'Losses:\s*\[(.*?)\],\s*step:\s*(\d+)', line)
+        if m:
+            vals = m.group(1).split(',')
+            point = {'step': int(m.group(2))}
+            if len(vals) >= 2:
+                point['d'] = float(vals[0])
+                point['g'] = float(vals[1])
+            if len(vals) >= 3:
+                point['fm'] = float(vals[2])
+            if len(vals) >= 4:
+                point['mel'] = float(vals[3])
+        else:
+            m = _re.search(r'step\s+(\d+)', line)
+            g = _re.search(r'G:\s*([\d.]+)', line)
+            d = _re.search(r'D:\s*([\d.]+)', line)
+            mel = _re.search(r'mel:\s*([\d.]+)', line)
+            if m and (g or d):
+                point = {'step': int(m.group(1))}
+                if g:
+                    point['g'] = float(g.group(1))
+                if d:
+                    point['d'] = float(d.group(1))
+                if mel:
+                    point['mel'] = float(mel.group(1))
+        if point:
             info['loss_data'].append(point)
     info['current_step'] = info['loss_data'][-1]['step'] if info['loss_data'] else 0
     info['pct'] = min(int(info['current_step'] * 100 / max(total_steps, 1)), 99) if total_steps else 0

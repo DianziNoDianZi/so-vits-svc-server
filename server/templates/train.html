@@ -123,6 +123,17 @@
                     <div id="trbar" style="height:100%;width:{{ pct }}%;background:linear-gradient(90deg,#d29922,#e3b341);transition:width .5s"></div>
                 </div>
                 <div class="text-secondary small mt-2" id="trstep">step {{ current_step }} / {{ total_steps }}</div>
+                <div class="mt-3">
+                    <div class="d-flex align-items-center mb-1">
+                        <span class="text-secondary small">损失曲线（G / D / FM）</span>
+                        <small class="text-secondary ms-auto" style="font-size:0.65rem;">滚轮缩放</small>
+                    </div>
+                    <canvas id="lossChart" height="110"></canvas>
+                    <div class="d-flex align-items-center mb-1 mt-2">
+                        <small class="text-secondary" style="font-size:0.7rem;">Mel Loss（重建质量，独立 Y 轴）</small>
+                    </div>
+                    <canvas id="melChart" height="80"></canvas>
+                </div>
                 <form method="POST" action="{{ url_for('train_stop') }}" class="mt-2">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <button class="btn btn-outline-warning btn-sm" onclick="return confirm('停止当前训练？')">停止训练</button>
@@ -198,6 +209,53 @@ function regCkpt(tid) {
 (function() {
     {% if active %}
     var tid = {{ active.id }};
+    var lossChart = null, melChart = null;
+    var zoomOk = (typeof ChartZoom !== 'undefined');
+    function zoomCfg() {
+        if (!zoomOk) return {};
+        return {zoom: {pan: {enabled: true, mode: 'xy', threshold: 3}, zoom: {wheel: {enabled: true, speed: 0.1}, pinch: {enabled: true}, drag: {enabled: false}, mode: 'xy'}, limits: {x: {min: 'original', max: 'original'}, y: {min: 'original', max: 'original'}}}};
+    }
+    var commonOpts = {
+        responsive: true, maintainAspectRatio: true, animation: false,
+        events: ['click', 'mousedown', 'mouseup', 'wheel', 'touchstart', 'touchmove'],
+        plugins: Object.assign({legend: {labels: {color: '#adb5bd', font: {size: 10}}}, tooltip: {enabled: false}}, zoomCfg()),
+        scales: { x: {ticks: {color: '#6c757d', font: {size: 8}, maxTicksLimit: 12}, grid: {color: '#343a40'}}, y: {ticks: {color: '#6c757d', font: {size: 9}}, grid: {color: '#495057'}} }
+    };
+    function mkCharts(data) {
+        if (!data || !data.length) return;
+        var labels = data.map(function(p){ return p.step; });
+        var hasMel = data.some(function(p){ return p.mel != null; });
+        var hasFm = data.some(function(p){ return p.fm != null; });
+        var cv = document.getElementById('lossChart');
+        var mcv = document.getElementById('melChart');
+        // 主图 G/D/FM
+        if (cv && !lossChart) {
+            var ds = [
+                {label: 'G Loss', data: data.map(function(p){ return p.g != null ? p.g : null; }), borderColor: '#0d6efd', borderWidth: 1, pointRadius: 0, fill: false},
+                {label: 'D Loss', data: data.map(function(p){ return p.d != null ? p.d : null; }), borderColor: '#dc3545', borderWidth: 1, pointRadius: 0, fill: false}
+            ];
+            if (hasFm) ds.push({label: 'FM Loss', data: data.map(function(p){ return p.fm != null ? p.fm : null; }), borderColor: '#ffc107', borderWidth: 1, pointRadius: 0, fill: false});
+            lossChart = new Chart(cv.getContext('2d'), {type: 'line', data: {labels: labels, datasets: ds}, options: commonOpts});
+        } else if (lossChart) {
+            lossChart.data.labels = labels;
+            lossChart.data.datasets.forEach(function(s){
+                var k = s.label.split(' ')[0].toLowerCase();
+                s.data = data.map(function(p){ return p[k] != null ? p[k] : null; });
+            });
+            lossChart.update('none');
+        }
+        // 副图 Mel
+        if (mcv && hasMel) {
+            if (!melChart) {
+                melChart = new Chart(mcv.getContext('2d'), {type: 'line', data: {labels: labels, datasets: [{label: 'Mel Loss', data: data.map(function(p){ return p.mel; }), borderColor: '#6f42c1', borderWidth: 1, pointRadius: 0, fill: false}]}, options: commonOpts});
+            } else {
+                melChart.data.labels = labels;
+                melChart.data.datasets[0].data = data.map(function(p){ return p.mel != null ? p.mel : null; });
+                melChart.update('none');
+            }
+        }
+    }
+    mkCharts({{ loss_data | safe }});
     var timer = setInterval(function() {
         fetch('/api/train/' + tid + '/status').then(function(r){ return r.json(); }).then(function(d) {
             document.getElementById('trmsg').textContent = d.progress_msg || '';
@@ -205,6 +263,9 @@ function regCkpt(tid) {
             document.getElementById('trbar').style.width = (d.pct || 0) + '%';
             document.getElementById('trstep').textContent = 'step ' + d.current_step + ' / ' + d.total_steps;
             if (d.status !== 'running') { clearInterval(timer); setTimeout(function(){ location.reload(); }, 1500); }
+        }).catch(function(){});
+        fetch('/api/train/' + tid + '/loss_chart.json').then(function(r){ return r.json(); }).then(function(d) {
+            if (d.loss_data && d.loss_data.length) mkCharts(d.loss_data.slice(-200));
         }).catch(function(){});
     }, 3000);
     {% endif %}
