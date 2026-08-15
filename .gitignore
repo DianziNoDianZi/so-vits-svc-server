@@ -8,6 +8,10 @@ CLAUDE_CODE_MAX_OUTPUT_TOKENS=640000.txt
 # 内部开发文档 / 个人部署笔记（不入仓库）
 plan.md
 way_to_put_in_the_server.txt
+ULTIMATE_GUIDE.md
+
+# 本地工具脚本（不入仓库）
+test_api.py
 
 # 预训练模型（部署时下载或手动上传）
 pretrain/*.pt
