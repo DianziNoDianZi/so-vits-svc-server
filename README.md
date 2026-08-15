@@ -29,7 +29,15 @@
 - **推理性能**：常驻 daemon + LRU 模型缓存、ONNX 加速（失败回退 PyTorch）
 - **训练（可选模块，仅管理员）**：后台开关控制；SoVITS / SoVITS+扩散、续训、停止、注册 checkpoint 为推理模型、进度轮询
 - **管理员后台**：总览（健康/暂停/待审核/磁盘）、用户配额、模型审核、全局任务队列（可停止/删除/导出 CSV）、存储与孤儿文件、公告、站点设置、训练开关
-- 安全：CSRF、登录/注册限速、路径穿越防护、会话密钥持久化、checkpoint 架构校验、不可信权重 `weights_only` 优先加载
+- **长线运营**：
+  - **数据库自动备份**：SQLite 在线备份（WAL 安全），定时 + 保留份数，管理员手动触发/下载
+  - **结构化日志**：`server/logs/app.log` 按大小轮转，带时间/级别/请求信息
+  - **健康检查**：`/healthz` 返回 db/daemon/队列/磁盘/暂停状态 JSON；`/status` 系统状态页（CPU/内存/GPU/任务统计/最近失败/最近备份）
+  - **审计日志**：管理员关键操作（配额/审核/任务/设置/更新/公告/备份/API Key）全程留痕，后台可查
+  - **邀请码注册**：注册模式可设关闭/选填/必填，管理员批量生成/撤销，控制开放节奏
+  - **对外 REST API**：用户/管理员通用，`X-API-Key` 鉴权，可提交推理/查状态/下载结果/查系统状态；`/api/v1/docs` 在线文档
+  - **通用限流**：推理/下载/上传按用户限次（次/分钟），阈值后台可调
+- 安全：CSRF、登录/注册限速、通用限流、路径穿越防护、会话密钥持久化、checkpoint 架构校验、不可信权重 `weights_only` 优先加载
 
 ## 模型架构
 
@@ -147,7 +155,8 @@ sudo bash deploy_linux.sh   # NVIDIA GPU / AMD ROCm / CPU 自动适配，全走�
 | 数据库 | DATABASE_URL | server/data.db |
 | 服务端口 | PORT | 5000 |
 | 推理超时 | INFERENCE_TASK_TIMEOUT | 21600（秒，6 小时） |
-| 推理模型缓存 | INFERENCE_MODEL_CACHE | 3（内存小调 1） |
+| 推理模型缓存 | INFERENCE_MODEL_CACHE | 1（内存小调 1） |
+| 推理切块秒数 | INFERENCE_CLIP_SECONDS | 15（长音频切成小块防 OOM，0=不切） |
 | 资源告警阈值/限频 | RESOURCE_THRESHOLD / RESOURCE_EMAIL_INTERVAL | 90 / 3600 |
 | 服务器 SMTP | SMTP_HOST/PORT/USER/PASS/MAIL_FROM | 空（也可在后台配置） |
 | 邮件内访问地址 | SSVC_SERVER_URL | 自动探测 |
@@ -176,13 +185,17 @@ sudo bash deploy_linux.sh   # NVIDIA GPU / AMD ROCm / CPU 自动适配，全走�
 5. 任务详情页看完整参数与错误；结果保留到期自动清理
 
 **管理员：**
-1. 后台“管理 ▾”→ 总览：待审核模型、健康状态（daemon/GPU/排队）、暂停/恢复调度
+1. 后台“管理 ▾”→ 总览：待审核模型、健康状态（daemon/GPU/排队）、暂停/恢复调度、**数据库备份**（立即备份/下载）
 2. **模型**：审核用户上传模型（通过 / 拒绝即删除），官方模型上/下架、下载核对、自动校验
 3. **用户**：启用/禁用、设置每人配额（每日任务数、CPU 核心、排队/运行、私有模型、结果保留）
-4. **任务**：全局队列，可停止/删除/导出 CSV
-5. **公告**：发布、置顶、邮件群发
-6. **设置**：注册开关、站点默认配额、SMTP、训练功能开关与 CPU 核心
-7. **训练**（若开启）：上传数据集训练 SoVITS，完成后注册为推理模型
+4. **邀请码**：生成/撤销邀请码，配合设置页“邀请码模式”（关闭/选填/必填）控制注册节奏
+5. **任务**：全局队列，可停止/删除/导出 CSV
+6. **公告**：发布、置顶、邮件群发
+7. **设置**：注册开关、邀请码模式、站点默认配额、**限流阈值**（推理/下载/上传）、**备份间隔与保留份数**、SMTP、训练功能开关与 CPU 核心
+8. **审计日志**：管理员关键操作全程留痕，按操作类型筛选
+9. **训练**（若开启）：上传数据集训练 SoVITS，完成后注册为推理模型
+
+**开发者（用户/管理员）**：设置页“开发者 API”生成 API Key，见下方 [REST API](#rest-api)。
 
 ## 训练可选模块（仅管理员）
 
@@ -233,6 +246,43 @@ sudo bash deploy_linux.sh   # NVIDIA GPU / AMD ROCm / CPU 自动适配，全走�
 python onnx_export_generator.py <模型.pth> <config.json> <输出.onnx>
 ```
 
+## REST API
+
+对外 REST 接口，用户和管理员通用（权限与账号一致）。在设置页“开发者 API”生成 Key，请求头带 `X-API-Key: <key>`（兼容 `Authorization: Bearer <key>`）。完整在线文档见 **`/api/v1/docs`**。
+
+快速示例：
+
+```bash
+# 提交推理（multipart 上传音频）
+curl -X POST https://你的域名/api/v1/inference \
+  -H "X-API-Key: $KEY" \
+  -F "config_id=1" \
+  -F "audio=@song.wav"
+
+# 查询任务状态 / 下载结果
+curl https://你的域名/api/v1/tasks/42 -H "X-API-Key: $KEY"
+curl -o result.wav https://你的域名/api/v1/tasks/42/result -H "X-API-Key: $KEY"
+
+# 系统状态 / 我的配额 / 可用模型 / 我的配置
+curl https://你的域名/api/v1/system -H "X-API-Key: $KEY"
+curl https://你的域名/api/v1/me -H "X-API-Key: $KEY"
+curl https://你的域名/api/v1/models -H "X-API-Key: $KEY"
+curl https://你的域名/api/v1/configs -H "X-API-Key: $KEY"
+```
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/inference` | 提交推理（`config_id` + `audio` 文件，可多文件） |
+| GET | `/api/v1/tasks/<id>` | 单个任务状态 |
+| GET | `/api/v1/tasks` | 我的任务列表（`?status=done` 筛选） |
+| GET | `/api/v1/tasks/<id>/result` | 下载结果文件 |
+| GET | `/api/v1/models` | 我可用的模型 |
+| GET | `/api/v1/configs` | 我的推理配置（含参数） |
+| GET | `/api/v1/me` | 我的信息 + 配额 + 今日用量 |
+| GET | `/api/v1/system` | 系统状态（daemon/队列/调度/CPU/内存/磁盘/统计） |
+
+错误码：`401` Key 无效 · `403` 账号禁用或资源不属于你 · `404` 不存在 · `429` 限流或配额满 · `400` 参数错误。
+
 ## 部署与运维
 
 **Linux 服务管理（systemd）**
@@ -240,16 +290,17 @@ python onnx_export_generator.py <模型.pth> <config.json> <输出.onnx>
 ```bash
 systemctl status ssvc          # 查看状态
 systemctl restart ssvc         # 重启（更新代码后必须）
-journalctl -u ssvc -n 100      # 查看日志
+journalctl -u ssvc -n 100      # 查看服务日志（systemd 捕获的 stdout）
+tail -f server/logs/app.log    # 查看结构化应用日志（轮转）
 ```
 
 **更新代码**
 
 ```bash
-cd /opt/so-vits-svc && git pull gitee master && systemctl restart ssvc
+cd ~/server/so-vits-svc-inference && git pull origin master && systemctl restart ssvc
 ```
 
-**数据安全**：模型权重、数据库、密钥、上传文件均不入 git（见 .gitignore）。更新代码不会覆盖 `uploads/`、`pretrain/`、`data.db`。
+**数据安全**：模型权重、数据库、密钥、上传文件、**备份**（`server/backups/`）、**日志**（`server/logs/`）均不入 git（见 .gitignore）。更新代码不会覆盖 `uploads/`、`pretrain/`、`data.db`、`backups/`。
 
 ## 常见问题（FAQ）
 
@@ -272,7 +323,16 @@ F0 预测器问题（训练用 `dio` 易沙哑，改 `harvest`）；训练不足
 checkpoint 和配置的架构不一致（v1/rvc/rvc-flow 混用）。用匹配的配置，或重新训练。
 
 **服务器内存小（OOM）？**
-调低 `INFERENCE_MODEL_CACHE=1`，推理配置 `cluster_ratio=0`，限制用户每日/排队配额。
+调低 `INFERENCE_MODEL_CACHE=1`，`INFERENCE_CLIP_SECONDS=15`（长音频自动切块降峰值内存），推理配置 `cluster_ratio=0`，限制用户每日/排队配额。
+
+**怎么恢复数据库备份？**
+后台“总览 → 数据库备份”下载 `backup_*.db`。恢复：停服务 → 用备份文件替换 `server/data.db`（删掉同名 `-wal`/`-shm`）→ 启动服务。
+
+**如何用 API 提交推理？**
+设置页“开发者 API”生成 Key，`X-API-Key` 请求头调用 `/api/v1/inference`（multipart）。示例见上文 [REST API](#rest-api) 与 `/api/v1/docs`。
+
+**怎么限制注册（防垃圾号）？**
+后台“设置 → 邀请码模式”设为“必填”，配合“邀请码”页生成邀请码分发给用户。
 
 **统一流 Hybrid 推理听不清文字 / 全是噪声？**
 确认 checkpoint 是用「FM 一致性修复 + head_fm 零初始化」之后的版本；早期 checkpoint（修复前）FM 从纯噪声起点训练，与推理起点不一致，会破坏语音。
@@ -282,10 +342,12 @@ checkpoint 和配置的架构不一致（v1/rvc/rvc-flow 混用）。用匹配�
 ```
 server/
 ├── server/              ← Flask 服务（app.py 入口、blueprints/ 路由、services/ 服务层、模板、worker）
-│   ├── blueprints/      ← 认证/仪表盘/模型/配置/推理/任务/公告/管理/训练
-│   ├── services/        ← 配额/调度/训练/模型校验
+│   ├── blueprints/      ← 认证/仪表盘/模型/配置/推理/任务/公告/管理/训练/健康检查/状态/REST API
+│   ├── services/        ← 配额/调度/训练/模型校验/备份/审计/日志/系统资源/REST鉴权
 │   ├── templates/       ← 页面模板
 │   ├── inference_daemon.py  inference_worker.py  ← 推理执行层
+│   ├── backups/         ← 数据库自动备份（不在 git）
+│   ├── logs/            ← 结构化轮转日志（不在 git）
 │   └── app.py           ← 应用工厂与入口
 ├── inference/ modules/ diffusion/ vencoder/ vdecoder/ cluster/   ← 推理算法
 ├── docs/                ← 统一流等设计文档
