@@ -58,12 +58,14 @@ def _allowed_audio(name):
     return name.lower().endswith(_AUDIO_EXTS)
 
 
-def _submit_one(cfg_obj, model, quota, audio_file, user):
+def _submit_one(cfg_obj, model, quota, audio_file, user, form_get=None):
     """提交单个音频：返回 ('ok', None) 或 ('skip', reason)。
 
     一次传 10 个音频就循环调它十遍，各自独立落库成任务。
     谁家的规则？每天的配额按"任务个数"算，不是按音频秒数——之前按秒数算，
     长音频一提交就把额度吃光，短音频却随便灌，总觉得哪里不对劲。
+
+    form_get 用于注入参数来源（网页=request.form.get，API=JSON dict.get）。
     """
     if not audio_file or not audio_file.filename:
         return 'skip', '空文件'
@@ -83,6 +85,8 @@ def _submit_one(cfg_obj, model, quota, audio_file, user):
         os.remove(audio_path)
         return 'skip', f'超 {int(quota.max_input_seconds)} 秒'
 
+    if form_get is None:
+        form_get = request.form.get
     try:
         cfg_params = json.loads(cfg_obj.params_json) if cfg_obj.params_json else DEFAULT_PARAMS.copy()
     except Exception:
@@ -91,11 +95,11 @@ def _submit_one(cfg_obj, model, quota, audio_file, user):
     for key, default in DEFAULT_PARAMS.items():
         if key in ('device', 'memory_limit'):
             continue
-        val = request.form.get(key)
+        val = form_get(key)
         if val is None:
             continue
         if isinstance(default, bool):
-            override[key] = val == 'on' or val == '1'
+            override[key] = val == 'on' or val == '1' or val is True
         elif isinstance(default, int):
             try:
                 override[key] = int(val)
@@ -138,6 +142,10 @@ def inference():
     config_items, hidden = _build_inference_config_items(configs, current_user)
 
     if request.method == 'POST':
+        from apputils import rate_limit_allowed
+        if not rate_limit_allowed('infer', f'{current_user.id}'):
+            flash('提交过于频繁，请稍后再试', 'danger')
+            return render_template('inference.html', configs=config_items)
         config_id = request.form.get('config_id', type=int)
         files = [f for f in request.files.getlist('audio_file') if f and f.filename]
         if not config_id or not files:

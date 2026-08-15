@@ -113,6 +113,9 @@ def task_detail(task_id):
 @bp.route('/tasks/<int:task_id>/result', endpoint='task_result')
 @login_required
 def task_result(task_id):
+    from apputils import rate_limit_allowed
+    if not rate_limit_allowed('download', f'{current_user.id}'):
+        abort(429, description='下载过于频繁，请稍后再试')
     task = Task.query.get_or_404(task_id)
     if task.user_id != current_user.id:
         abort(403)

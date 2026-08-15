@@ -16,6 +16,15 @@
                         <label class="form-check-label" for="allowReg">开放注册</label>
                     </div>
                     <div class="mb-3">
+                        <label class="form-label">邀请码模式 <a href="{{ url_for('admin_invites') }}" class="small text-info">管理邀请码</a></label>
+                        <select name="invite_mode" class="form-select bg-dark text-light border-secondary">
+                            <option value="off" {{ 'selected' if site.invite_mode == 'off' }}>关闭</option>
+                            <option value="optional" {{ 'selected' if site.invite_mode == 'optional' }}>选填（填了须有效）</option>
+                            <option value="required" {{ 'selected' if site.invite_mode == 'required' }}>必填</option>
+                        </select>
+                        <small class="text-secondary">必填=新用户必须持邀请码注册，适合控制开放节奏</small>
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label">新用户默认排队上限</label>
                         <input type="number" name="default_max_queued" class="form-control bg-dark text-light border-secondary" value="{{ site.default_max_queued }}" min="0">
                     </div>
@@ -42,6 +51,30 @@
                     <div class="mb-3">
                         <label class="form-label">结果保留天数</label>
                         <input type="number" name="default_result_retention_days" class="form-control bg-dark text-light border-secondary" value="{{ site.default_result_retention_days }}" min="1">
+                    </div>
+                    <hr class="border-secondary">
+                    <h6 class="text-secondary">限流（0=关闭，次/分钟/用户）</h6>
+                    <div class="mb-2">
+                        <label class="form-label small">推理提交频率</label>
+                        <input type="number" name="rate_infer" class="form-control bg-dark text-light border-secondary" value="{{ site.rate_infer }}" min="0">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small">结果下载频率</label>
+                        <input type="number" name="rate_download" class="form-control bg-dark text-light border-secondary" value="{{ site.rate_download }}" min="0">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">模型上传频率</label>
+                        <input type="number" name="rate_upload" class="form-control bg-dark text-light border-secondary" value="{{ site.rate_upload }}" min="0">
+                    </div>
+                    <hr class="border-secondary">
+                    <h6 class="text-secondary">数据库备份</h6>
+                    <div class="mb-2">
+                        <label class="form-label small">自动备份间隔（小时）</label>
+                        <input type="number" name="backup_interval_hours" class="form-control bg-dark text-light border-secondary" value="{{ site.backup_interval_hours }}" min="0" step="0.5">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">保留备份份数</label>
+                        <input type="number" name="backup_keep" class="form-control bg-dark text-light border-secondary" value="{{ site.backup_keep }}" min="1">
                     </div>
                     <button type="submit" class="btn btn-primary w-100">保存站点设置</button>
                 </form>

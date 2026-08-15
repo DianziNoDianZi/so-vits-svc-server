@@ -154,6 +154,29 @@ class Announcement(db.Model):
     author = db.relationship('User')
 
 
+class InviteCode(db.Model):
+    code = db.Column(db.String(40), primary_key=True)
+    used_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    used_at = db.Column(db.DateTime, nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
+
+    used_by = db.relationship('User', foreign_keys=[used_by_user_id])
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id])
+
+
+class ApiToken(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    token_hash = db.Column(db.String(128), nullable=False, unique=True)
+    name = db.Column(db.String(100), default='default')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    revoked_at = db.Column(db.DateTime, nullable=True)
+
+    user = db.relationship('User', backref='api_tokens')
+
+
 class AuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)

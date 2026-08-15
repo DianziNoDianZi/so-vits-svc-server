@@ -31,6 +31,66 @@ def _csrf_token():
     return session['_csrf_token']
 
 
+# ========== 通用限流 ==========
+class RateLimiter:
+    """通用滑动窗口限流：按 key（如 remote_addr+action 或 user_id）限次。"""
+
+    def __init__(self, max_calls, window_seconds):
+        self.max_calls = max(1, int(max_calls))
+        self.window = max(1, int(window_seconds))
+        self._hits = {}
+        self._lock = __import__('threading').Lock()
+
+    def _cleanup(self, now):
+        cutoff = now - self.window
+        for k in [k for k, (ts, _c) in self._hits.items() if ts < cutoff]:
+            del self._hits[k]
+
+    def allow(self, key):
+        """返回 True 放行；False 拒绝。"""
+        now = time.time()
+        with self._lock:
+            self._cleanup(now)
+            ts, count = self._hits.get(key, (now, 0))
+            if now - ts > self.window:
+                ts, count = now, 0
+            if count >= self.max_calls:
+                return False
+            self._hits[key] = (ts, count + 1)
+            return True
+
+
+# 默认限流器：推理提交/下载/上传共用。阈值从 ServerSetting 读（key: rate_infer / rate_download / rate_upload）
+_infer_limiter = RateLimiter(10, 60)
+_download_limiter = RateLimiter(30, 60)
+_upload_limiter = RateLimiter(10, 60)
+
+
+def _limiter_for(name):
+    from services.quota import get_setting
+    max_calls = int(get_setting(f'rate_{name}', 0) or 0)
+    if max_calls <= 0:
+        return None
+    if name == 'infer':
+        _infer_limiter.max_calls = max_calls
+        return _infer_limiter
+    if name == 'download':
+        _download_limiter.max_calls = max_calls
+        return _download_limiter
+    if name == 'upload':
+        _upload_limiter.max_calls = max_calls
+        return _upload_limiter
+    return None
+
+
+def rate_limit_allowed(name, key):
+    """返回 True 放行；False 超限。阈值<=0 时不限流。"""
+    limiter = _limiter_for(name)
+    if limiter is None:
+        return True
+    return limiter.allow(key)
+
+
 # ========== 登录限速 ==========
 _login_attempts = {}
 _login_lock = __import__('threading').Lock()

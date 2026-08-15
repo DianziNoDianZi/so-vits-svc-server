@@ -3,7 +3,7 @@ import csv
 import io
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, send_file, Response
 from flask_login import login_required, current_user
@@ -547,6 +547,8 @@ def admin_settings():
             return redirect(url_for('admin_settings'))
         if request.form.get('action') == 'site':
             set_setting('allow_registration', '1' if request.form.get('allow_registration') else '0')
+            im = request.form.get('invite_mode', 'off')
+            set_setting('invite_mode', im if im in ('off', 'required', 'optional') else 'off')
             set_setting('default_max_queued', request.form.get('default_max_queued', '4'))
             set_setting('default_max_running', request.form.get('default_max_running', '1'))
             set_setting('default_max_input_seconds', request.form.get('default_max_input_seconds', '600'))
@@ -554,6 +556,11 @@ def admin_settings():
             set_setting('default_max_cpu_cores', request.form.get('default_max_cpu_cores', '0'))
             set_setting('default_max_private_models', request.form.get('default_max_private_models', '3'))
             set_setting('default_result_retention_days', request.form.get('default_result_retention_days', '7'))
+            set_setting('rate_infer', request.form.get('rate_infer', '0'))
+            set_setting('rate_download', request.form.get('rate_download', '0'))
+            set_setting('rate_upload', request.form.get('rate_upload', '0'))
+            set_setting('backup_interval_hours', request.form.get('backup_interval_hours', '24'))
+            set_setting('backup_keep', request.form.get('backup_keep', '10'))
             from services.audit import audit_log
             audit_log('settings_site', f'站点设置已保存: 开放注册={get_setting("allow_registration")} '
                                        f'邀请码模式={get_setting("invite_mode", "off")}')
@@ -578,6 +585,7 @@ def admin_settings():
            'smtp_user': get_setting('smtp_user', ''), 'mail_from': get_setting('mail_from', '')}
     site = {
         'allow_registration': get_setting('allow_registration', __import__('os').environ.get('ALLOW_REGISTRATION', '1')) == '1',
+        'invite_mode': get_setting('invite_mode', 'off'),
         'default_max_queued': get_setting('default_max_queued', 4),
         'default_max_running': get_setting('default_max_running', 1),
         'default_max_input_seconds': get_setting('default_max_input_seconds', 600),
@@ -585,6 +593,11 @@ def admin_settings():
         'default_max_cpu_cores': get_setting('default_max_cpu_cores', 0),
         'default_max_private_models': get_setting('default_max_private_models', 3),
         'default_result_retention_days': get_setting('default_result_retention_days', 7),
+        'rate_infer': get_setting('rate_infer', 0),
+        'rate_download': get_setting('rate_download', 0),
+        'rate_upload': get_setting('rate_upload', 0),
+        'backup_interval_hours': get_setting('backup_interval_hours', 24),
+        'backup_keep': get_setting('backup_keep', 10),
     }
     from services.training import training_enabled
     train = {'enabled': training_enabled(), 'cpu_cores': get_setting('train_cpu_cores', '0')}
@@ -681,6 +694,54 @@ def admin_audit():
     actions = [r[0] for r in db.session.query(AuditLog.action).distinct().order_by(AuditLog.action.asc()).all()]
     return render_template('admin_audit.html', rows=rows, actions=actions, cur_action=action,
                            page=page, pages=pages, total=total)
+
+
+@bp.route('/admin/invites', methods=['GET', 'POST'], endpoint='admin_invites')
+@login_required
+def admin_invites():
+    _guard()
+    from db_models import InviteCode
+    if request.method == 'POST':
+        from services.audit import audit_log
+        count = max(int(request.form.get('count', 1) or 1), 1)
+        count = min(count, 100)
+        try:
+            days = int(request.form.get('expires_days', 0) or 0)
+        except (ValueError, TypeError):
+            days = 0
+        import secrets
+        created = []
+        for _ in range(count):
+            code = secrets.token_hex(4).upper()
+            while InviteCode.query.filter_by(code=code).first():
+                code = secrets.token_hex(4).upper()
+            obj = InviteCode(code=code, created_by_user_id=current_user.id,
+                             expires_at=datetime.utcnow() + timedelta(days=days) if days > 0 else None)
+            db.session.add(obj)
+            created.append(code)
+        db.session.commit()
+        audit_log('invite_generate', f'生成 {count} 个邀请码')
+        flash(f'已生成 {len(created)} 个邀请码（{count} 天内有效）' if days else f'已生成 {len(created)} 个邀请码（长期有效）', 'success')
+        return redirect(url_for('admin_invites'))
+    codes = InviteCode.query.order_by(InviteCode.created_at.desc()).limit(200).all()
+    return render_template('admin_invites.html', codes=codes, now=datetime.utcnow())
+
+
+@bp.route('/admin/invites/revoke/<code>', methods=['POST'], endpoint='admin_invite_revoke')
+@login_required
+def admin_invite_revoke(code):
+    _guard()
+    from db_models import InviteCode
+    from services.audit import audit_log
+    obj = InviteCode.query.filter_by(code=code).first()
+    if obj and not obj.used_at:
+        db.session.delete(obj)
+        db.session.commit()
+        audit_log('invite_revoke', f'撤销邀请码 {code}')
+        flash(f'邀请码 {code} 已撤销', 'success')
+    else:
+        flash('邀请码不存在或已被使用', 'warning')
+    return redirect(url_for('admin_invites'))
 
 
 @bp.route('/admin/backup', methods=['POST'], endpoint='admin_backup')

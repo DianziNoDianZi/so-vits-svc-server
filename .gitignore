@@ -26,6 +26,8 @@ server/server2.out.log
 local_err.log
 local_out.log
 server/uploads/
+server/backups/
+server/logs/
 configs/
 filelists/
 dataset/

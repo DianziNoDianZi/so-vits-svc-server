@@ -58,6 +58,93 @@
                 </form>
             </div>
         </div>
+
+        <div class="card bg-dark border-secondary mb-3">
+            <div class="card-body">
+                <h3 class="card-title text-center mb-4">开发者 API <a href="{{ url_for('api_docs') }}" class="small text-info" target="_blank">查看文档</a></h3>
+                <p class="text-secondary small text-center mb-3">生成 API Key，用 <code>X-API-Key: &lt;key&gt;</code> 请求头调用 REST 接口</p>
+                <form id="apiTokenForm" class="mb-3 js-no-overlay">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <div class="input-group">
+                        <input type="text" name="name" class="form-control bg-dark text-light border-secondary" placeholder="Key 名称（如: bot）">
+                        <button class="btn btn-primary" type="submit">生成</button>
+                    </div>
+                </form>
+                <div class="alert alert-warning py-2 small d-none" id="apiTokenResult"></div>
+                <div id="apiTokenList"><p class="text-secondary small text-center mb-0">加载中...</p></div>
+                <hr class="border-secondary">
+                <p class="text-secondary small mb-1">端点示例：</p>
+                <pre class="p-2 rounded small mb-0" style="overflow-x:auto;background:#0d1117;color:#e6edf3;border:1px solid #30363d">
+POST /api/v1/inference  提交推理（multipart: config_id + audio）
+GET  /api/v1/tasks/&lt;id&gt;           查询状态
+GET  /api/v1/tasks/&lt;id&gt;/result    下载结果
+GET  /api/v1/models                可用模型
+GET  /api/v1/configs               我的推理配置</pre>
+            </div>
+        </div>
     </div>
 </div>
+<script>
+(function() {
+    var tokenResult = document.getElementById('apiTokenResult');
+    var tokenList = document.getElementById('apiTokenList');
+    var form = document.getElementById('apiTokenForm');
+
+    function csrf() {
+        var m = document.cookie.match(/csrf/);
+        return document.querySelector('input[name="_csrf_token"]') ? document.querySelector('input[name="_csrf_token"]').value : '';
+    }
+
+    function showMsg(html, isErr) {
+        tokenResult.innerHTML = html;
+        tokenResult.classList.remove('d-none');
+        tokenResult.classList.toggle('alert-danger', !!isErr);
+        tokenResult.classList.toggle('alert-warning', !isErr);
+    }
+
+    function loadTokens() {
+        fetch('/api/v1/token').then(function(r){ return r.json(); }).then(function(d) {
+            if (!d.tokens || !d.tokens.length) {
+                tokenList.innerHTML = '<p class="text-secondary small text-center mb-0">还没有 API Key</p>';
+                return;
+            }
+            var html = '<ul class="list-group list-group-flush">';
+            d.tokens.forEach(function(t) {
+                html += '<li class="list-group-item bg-dark text-light border-secondary d-flex justify-content-between align-items-center">'
+                    + '<span><strong>' + t.name + '</strong> <small class="text-secondary">' + t.created_at + '</small></span>'
+                    + '<button class="btn btn-sm btn-outline-danger" data-id="' + t.id + '">撤销</button></li>';
+            });
+            html += '</ul>';
+            tokenList.innerHTML = html;
+            tokenList.querySelectorAll('button[data-id]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    fetch('/api/v1/token/' + btn.getAttribute('data-id'), {
+                        method: 'DELETE',
+                        headers: {'X-CSRF-Token': csrf()}
+                    })
+                        .then(function(r){ return r.json(); })
+                        .then(function(){ loadTokens(); });
+                });
+            });
+        });
+    }
+
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var fd = new FormData(form);
+        fd.append('_csrf_token', csrf());
+        fetch('/api/v1/token', {method: 'POST', body: fd}).then(function(r){ return r.json(); }).then(function(d) {
+            if (d.token) {
+                showMsg('新 API Key：<code>' + d.token + '</code><br><strong>仅显示这一次，请立即复制保存。</strong>');
+                form.querySelector('input[name="name"]').value = '';
+                loadTokens();
+            } else {
+                showMsg(d.error || '生成失败', true);
+            }
+        });
+    });
+
+    loadTokens();
+})();
+</script>
 {% endblock %}

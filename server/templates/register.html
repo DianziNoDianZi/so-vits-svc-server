@@ -29,6 +29,13 @@
                         <label class="form-label">确认密码</label>
                         <input type="password" name="confirm_password" class="form-control bg-dark text-light border-secondary" required minlength="6">
                     </div>
+                    {% if invite_mode and invite_mode != 'off' %}
+                    <div class="mb-3">
+                        <label class="form-label">邀请码 {% if invite_mode == 'required' %}<span class="text-danger">*</span>{% else %}<small class="text-secondary">（选填）</small>{% endif %}</label>
+                        <input type="text" name="invite_code" class="form-control bg-dark text-light border-secondary" {% if invite_mode == 'required' %}required{% endif %}>
+                        {% if invite_mode == 'required' %}<small class="text-warning">本服务需邀请码才能注册</small>{% endif %}
+                    </div>
+                    {% endif %}
                     <button type="submit" class="btn btn-primary w-100">注册</button>
                 </form>
                 <p class="text-center text-secondary mt-3 mb-0">

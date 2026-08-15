@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2 class="mb-0">API 文档</h2>
+    {% if current_user.is_authenticated %}
+    <a href="{{ url_for('settings') }}" class="btn btn-sm btn-outline-primary">在设置页生成 API Token</a>
+    {% endif %}
+</div>
+<p class="text-secondary small mt-2">除文档页外，所有接口都需要 <code>X-API-Key: &lt;key&gt;</code> 请求头鉴权（也兼容 <code>Authorization: Bearer &lt;key&gt;</code>）。Key 在 <a href="{{ url_for('settings') }}">设置 → 开发者 API</a> 生成，用户和管理员账号都能使用，权限与账号一致（管理员 Key 拥有管理员权限）。</p>
+
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="card-title">快速开始</h5>
+        <pre class="p-3 rounded small mb-0" style="background:#0d1117;color:#e6edf3;border:1px solid #30363d"><code># 1. 设置页生成 Key（记为 $KEY）
+
+# 2. 提交推理任务（multipart 上传音频）
+curl -X POST https://你的域名/api/v1/inference \
+  -H "X-API-Key: $KEY" \
+  -F "config_id=1" \
+  -F "audio=@song.wav"
+# {"created": 1, "skipped": []}
+
+# 3. 查询任务状态
+curl https://你的域名/api/v1/tasks/42 \
+  -H "X-API-Key: $KEY"
+# {"id":42,"status":"done","pct":100,"has_result":true,...}
+
+# 4. 下载结果
+curl -o result.wav https://你的域名/api/v1/tasks/42/result \
+  -H "X-API-Key: $KEY"</code></pre>
+    </div>
+</div>
+
+<div class="card bg-dark border-secondary mt-3">
+    <div class="table-responsive">
+        <table class="table table-dark table-striped mb-0 align-middle">
+            <thead><tr><th style="width:90px">方法</th><th>路径</th><th>说明</th></tr></thead>
+            <tbody>
+            <tr><td><span class="badge bg-success">POST</span></td><td><code>/api/v1/inference</code></td><td>提交推理任务（multipart: <code>config_id</code> + <code>audio</code> 文件，可传多个）</td></tr>
+            <tr><td><span class="badge bg-info">GET</span></td><td><code>/api/v1/tasks/&lt;id&gt;</code></td><td>查询单个任务状态</td></tr>
+            <tr><td><span class="badge bg-info">GET</span></td><td><code>/api/v1/tasks</code></td><td>我的任务列表（可选 <code>?status=done</code> 筛选）</td></tr>
+            <tr><td><span class="badge bg-info">GET</span></td><td><code>/api/v1/tasks/&lt;id&gt;/result</code></td><td>下载推理结果文件</td></tr>
+            <tr><td><span class="badge bg-info">GET</span></td><td><code>/api/v1/models</code></td><td>我可用的模型列表</td></tr>
+            <tr><td><span class="badge bg-info">GET</span></td><td><code>/api/v1/configs</code></td><td>我的推理配置列表（含参数）</td></tr>
+            <tr><td><span class="badge bg-info">GET</span></td><td><code>/api/v1/me</code></td><td>我的信息 + 配额 + 今日用量</td></tr>
+            <tr><td><span class="badge bg-info">GET</span></td><td><code>/api/v1/system</code></td><td>系统状态（daemon/队列/调度暂停/统计）</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="card-title">任务状态枚举</h5>
+        <ul class="text-secondary small mb-0">
+            <li><code>pending</code> 排队中 · <code>claimed</code> 已领取 · <code>running</code> 推理中 · <code>done</code> 完成 · <code>failed</code> 失败 · <code>stopped</code> 已停止</li>
+        </ul>
+    </div>
+</div>
+
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="card-title">错误码</h5>
+        <ul class="text-secondary small mb-0">
+            <li><code>401</code> token 缺失/无效/已撤销</li>
+            <li><code>403</code> 账号被禁用或资源不属于你</li>
+            <li><code>404</code> 任务/结果不存在</li>
+            <li><code>429</code> 触发限流或配额上限</li>
+            <li><code>400</code> 参数错误（如缺 config_id）</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

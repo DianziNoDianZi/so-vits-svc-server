@@ -94,7 +94,8 @@
             if (!overlay) return;
             var msgEl = document.getElementById("procMsg");
             var elapsedEl = document.getElementById("procElapsed");
-            var forms = document.querySelectorAll("form:not(.js-upload)");
+            // 排除 .js-upload（XHR 上传，有自己的进度条）和 .js-no-overlay（异步 fetch 表单，无需覆盖层）
+            var forms = document.querySelectorAll("form:not(.js-upload):not(.js-no-overlay)");
             forms.forEach(function (form) {
                 form.addEventListener("submit", function () {
                     setTimeout(function () {

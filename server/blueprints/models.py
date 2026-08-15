@@ -48,6 +48,10 @@ def current_upload():
 @login_required
 def model_upload():
     if request.method == 'POST':
+        from apputils import rate_limit_allowed
+        if not rate_limit_allowed('upload', f'{current_user.id}'):
+            flash('上传过于频繁，请稍后再试', 'danger')
+            return render_template('model_upload.html')
         name = request.form.get('name', '').strip()
         model_file = request.files.get('model_file')
         config_file = request.files.get('config_file')

@@ -1,5 +1,6 @@
 """认证蓝图：登录/注册/改密/通知设置/退出。"""
 import re
+from datetime import datetime
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_user, logout_user, login_required, current_user
@@ -65,14 +66,36 @@ def register():
             errors.append('结果接收邮箱格式不正确')
         if not errors and User.query.filter_by(username=username).first():
             errors.append('用户名已存在')
+
+        # 邀请码模式：required 必填有效码；optional 选填（填了必须有效）
+        invite_mode = get_setting('invite_mode', 'off')
+        invite_code = request.form.get('invite_code', '').strip()
+        from db_models import InviteCode
+        code_obj = None
+        if invite_code:
+            code_obj = InviteCode.query.filter_by(code=invite_code).first()
+            if not code_obj:
+                errors.append('邀请码不存在')
+            elif code_obj.used_at:
+                errors.append('邀请码已被使用')
+            elif code_obj.expires_at and code_obj.expires_at < datetime.utcnow():
+                errors.append('邀请码已过期')
+        elif invite_mode == 'required':
+            errors.append('当前需要邀请码才能注册')
+
         if errors:
             _record_register(remote)
             for e in errors:
                 flash(e, 'danger')
-            return render_template('register.html', username=username, email=email, notify_email=notify_email)
+            return render_template('register.html', username=username, email=email, notify_email=notify_email,
+                                   invite_mode=invite_mode)
         user = User(username=username, password_hash=generate_password_hash(password), role='user',
                     is_active=True, email=email or None, notify_email=notify_email or None, infer_notify=True)
         db.session.add(user)
+        db.session.flush()
+        if code_obj:
+            code_obj.used_by_user_id = user.id
+            code_obj.used_at = datetime.utcnow()
         db.session.commit()
         current_quota(user)
         login_user(user)
@@ -83,7 +106,8 @@ def register():
             pass
         flash('注册成功，欢迎使用', 'success')
         return redirect(url_for('dashboard'))
-    return render_template('register.html')
+    invite_mode = get_setting('invite_mode', 'off')
+    return render_template('register.html', invite_mode=invite_mode)
 
 
 @bp.route('/change-password', methods=['GET', 'POST'], endpoint='change_password')
