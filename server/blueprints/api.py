@@ -171,14 +171,10 @@ def api_system():
     daemon_alive = bool(scheduler.inference_daemon_proc and scheduler.inference_daemon_proc.is_alive())
     queue_depth = Task.query.filter(Task.status.in_(['pending', 'claimed'])).count()
     running = Task.query.filter(Task.status == 'running').count()
-    cpu = mem = None
+    from services.sysinfo import cpu_percent as _cpu, mem_percent as _mem
+    cpu = _cpu()
+    mem = _mem()
     disk_free = disk_total = None
-    try:
-        import psutil as _psutil
-        cpu = _psutil.cpu_percent(interval=0.2)
-        mem = _psutil.virtual_memory().percent
-    except Exception:
-        pass
     try:
         import shutil as _shutil
         from flask import current_app as _app

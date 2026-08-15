@@ -54,17 +54,10 @@ def status():
     except Exception:
         pass
 
-    # 资源（CPU/内存）
-    cpu = mem = None
-    try:
-        import psutil as _psutil
-        # cpu_percent(interval=None) 首次调用返回 0（需要两次采样差值），
-        # 这里阻塞采样 0.2s 才能拿到真实占用；内存是即时值不用等。
-        cpu = _psutil.cpu_percent(interval=0.2)
-        mem = _psutil.virtual_memory().percent
-    except Exception:
-        import traceback
-        current_app.logger.error('status: psutil 读取失败\n' + traceback.format_exc())
+    # 资源（CPU/内存）：优先读 /proc，回退 psutil，都不行返回 None（模板显示"不可用"）
+    from services.sysinfo import cpu_percent as _cpu, mem_percent as _mem
+    cpu = _cpu()
+    mem = _mem()
 
     # GPU
     gpu = None
