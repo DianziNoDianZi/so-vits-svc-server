@@ -63,7 +63,8 @@ def status():
         cpu = _psutil.cpu_percent(interval=0.2)
         mem = _psutil.virtual_memory().percent
     except Exception:
-        pass
+        import traceback
+        current_app.logger.error('status: psutil 读取失败\n' + traceback.format_exc())
 
     # GPU
     gpu = None
