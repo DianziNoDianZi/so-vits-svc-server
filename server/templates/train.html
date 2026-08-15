@@ -276,9 +276,13 @@
                     </div>
                     <canvas id="melChart" height="80"></canvas>
                 </div>
-                <form method="POST" action="{{ url_for('train_stop') }}" class="mt-2">
+                <form method="POST" action="{{ url_for('train_stop') }}" class="mt-2 d-inline">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <button class="btn btn-outline-warning btn-sm" onclick="return confirm('停止当前训练？')">停止训练</button>
+                </form>
+                <form method="POST" action="{{ url_for('train_force_restart') }}" class="mt-2 d-inline">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-outline-danger btn-sm" onclick="return confirm('确定强制重启整个服务器？\\n\\n将终止所有残留训练/推理子进程，服务重启约 5 秒。')">⚠ 强制重启服务器</button>
                 </form>
             </div>
         </div>

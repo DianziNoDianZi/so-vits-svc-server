@@ -1,5 +1,6 @@
 import gc
 import os
+import signal
 import sys
 import time
 import json
@@ -190,7 +191,11 @@ def _apply_encoder_dims(cfg, speech_encoder):
 def stop():
     global _current_proc
     if _current_proc and _current_proc.poll() is None:
-        _current_proc.kill()
+        # 杀整个会话组，连带 preprocess 等 fork 出的孙进程一起清干净
+        try:
+            os.killpg(os.getpgid(_current_proc.pid), signal.SIGKILL)
+        except Exception:
+            _current_proc.kill()
         try:
             _current_proc.wait(timeout=10)
         except Exception:
@@ -253,6 +258,7 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             encoding='utf-8', errors='replace',
             env=env,
+            start_new_session=True,  # 独立会话组，停止时可连孙进程一起杀干净
         )
         _current_proc = p
         # 按 \r 和 \n 切分输出，tqdm 的进度条（\r 刷新）也能实时进日志

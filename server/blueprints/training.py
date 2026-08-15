@@ -5,7 +5,7 @@ import shutil
 import uuid
 from datetime import datetime
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, send_file, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, send_file, jsonify, Response
 from flask_login import login_required, current_user
 
 from authorization import is_admin
@@ -177,6 +177,44 @@ def train_stop():
     else:
         flash('当前没有运行中的训练任务', 'info')
     return redirect(url_for('train_page'))
+
+
+@bp.route('/train/force-restart', methods=['POST'], endpoint='train_force_restart')
+@login_required
+def train_force_restart():
+    """强制重启整个服务器：终止残留训练/推理子进程，systemctl 重启 ssvc。
+    用于训练停止后仍有进程残留、CPU 占用不降的情况。"""
+    _guard()
+    from services.audit import audit_log
+    audit_log('train_force_restart', '管理员强制重启服务器（清残留训练进程）')
+    # 先尝试优雅停掉当前训练子进程组
+    try:
+        stop_training()
+    except Exception:
+        pass
+    import subprocess as _sp
+    if os.name == 'nt':
+        return Response(
+            '<html><body style="background:#0d1117;color:#c9d1d9;font-family:sans-serif;'
+            'text-align:center;padding-top:15vh"><h2>Windows 无法自动重启服务，请手动重启</h2>'
+            '<p>关闭当前窗口后重新运行 start.bat</p>'
+            '</body></html>', status=200)
+    import threading
+
+    def _restart():
+        import time as _t
+        _t.sleep(2)
+        try:
+            _sp.run(['systemctl', 'restart', 'ssvc'], capture_output=True, timeout=60)
+        except Exception:
+            pass
+    threading.Thread(target=_restart, daemon=True).start()
+    return Response(
+        '<html><body style="background:#0d1117;color:#c9d1d9;font-family:sans-serif;'
+        'text-align:center;padding-top:15vh"><h2>正在强制重启服务器…</h2>'
+        '<p>残留训练进程将被清掉，服务约 5 秒后恢复。</p>'
+        '<script>setTimeout(function(){location.href="/train"},6000)</script>'
+        '</body></html>', status=200)
 
 
 @bp.route('/train/result/<int:tid>', endpoint='train_result')
