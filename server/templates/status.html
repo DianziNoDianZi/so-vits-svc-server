@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2 class="mb-0">系统状态</h2>
+    {% if current_user.role == 'admin' %}
+    <a href="{{ url_for('admin_index') }}" class="btn btn-sm btn-outline-secondary">管理总览</a>
+    {% endif %}
+</div>
+
+{% if resource_warning and resource_warning.active %}
+<div class="alert alert-warning mt-3 py-2 small mb-0">
+    ⚠ {{ resource_warning.message }}
+</div>
+{% endif %}
+
+<div class="row mt-3 g-2">
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">推理 daemon</div>
+                <div class="fs-4 {{ 'text-success' if daemon_alive else 'text-danger' }}">
+                    <i class="bi {{ 'bi-check-circle' if daemon_alive else 'bi-x-circle' }}"></i>
+                    {{ '运行中' if daemon_alive else '已停止' }}
+                </div>
+                <div class="text-secondary small">调度 {{ '已暂停' if paused else '正常' }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">任务队列</div>
+                <div class="fs-4">{{ queue_depth }} <small class="text-secondary fs-6">排队</small></div>
+                <div class="text-secondary small">{{ running }} 个运行中</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">今日任务</div>
+                <div class="fs-4">{{ done_today + failed_today }}</div>
+                <div class="text-secondary small">完成 {{ done_today }} · 失败 {{ failed_today }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body text-center">
+                <div class="text-secondary small">磁盘</div>
+                <div class="fs-4">{{ disk_pct }}%</div>
+                <div class="text-secondary small">剩余 {{ '%.1f'|format(disk_free / 1073741824) }} GB / {{ '%.1f'|format(disk_total / 1073741824) }} GB</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3 g-2">
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body">
+                <h5 class="card-title mb-3"><i class="bi bi-cpu me-2"></i>资源占用</h5>
+                <table class="table table-dark table-striped mb-0">
+                    <tbody>
+                    <tr><td>CPU</td><td>
+                        {% if cpu is not none %}{{ '%.0f'|format(cpu) }}%{% else %}<span class="text-secondary">不可用</span>{% endif %}
+                    </td></tr>
+                    <tr><td>内存</td><td>
+                        {% if mem is not none %}{{ '%.0f'|format(mem) }}%{% else %}<span class="text-secondary">不可用</span>{% endif %}
+                    </td></tr>
+                    <tr><td>GPU 显存</td><td>
+                        {% if gpu is not none %}{{ '%.0f'|format(gpu) }}%{% else %}<span class="text-secondary">无 GPU</span>{% endif %}
+                    </td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body">
+                <h5 class="card-title mb-3"><i class="bi bi-database me-2"></i>服务统计</h5>
+                <table class="table table-dark table-striped mb-0">
+                    <tbody>
+                    <tr><td>注册用户</td><td>{{ stats.users }}</td></tr>
+                    <tr><td>模型总数</td><td>{{ stats.total_models }}（官方 {{ stats.official_models }}）</td></tr>
+                    <tr><td>历史任务</td><td>{{ stats.total_tasks }}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if backups %}
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="card-title mb-3"><i class="bi bi-archive me-2"></i>最近备份</h5>
+        <table class="table table-dark table-striped mb-0">
+            <thead><tr><th>文件</th><th>时间</th></tr></thead>
+            <tbody>
+            {% for b in backups %}
+            <tr><td>{{ b.name }}</td><td>{{ b.mtime.strftime('%Y-%m-%d %H:%M') }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if fail_items %}
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="card-title mb-3"><i class="bi bi-exclamation-triangle me-2"></i>最近失败任务</h5>
+        <table class="table table-dark table-striped mb-0 align-middle">
+            <thead><tr><th>#</th><th>用户</th><th>时间</th><th>错误</th></tr></thead>
+            <tbody>
+            {% for f in fail_items %}
+            <tr>
+                <td>#{{ f.id }}</td>
+                <td>{{ f.user }}</td>
+                <td class="text-secondary small">{{ f.done_at.strftime('%m-%d %H:%M') if f.done_at else '' }}</td>
+                <td class="text-danger small">{{ f.error }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
