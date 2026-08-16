@@ -151,7 +151,9 @@ def run(rank, n_gpus, hps):
     try:
         ckpt_g = utils.latest_checkpoint_path(hps.model_dir, "G_*.pth")
         ckpt_d = utils.latest_checkpoint_path(hps.model_dir, "D_*.pth")
-        is_base = 'G_0.pth' in ckpt_g or 'G_0.pth' in ckpt_d
+        # 底模识别：G_0.pth 通用底模，或 G_0_rvc.pth（rvc 专属底模），都当作"从 epoch 0 开始"的底模
+        is_base = ('G_0.pth' in ckpt_g or 'G_0.pth' in ckpt_d
+                   or 'G_0_rvc.pth' in ckpt_g or 'G_0_rvc.pth' in ckpt_d)
         if is_base and hps.model.ssl_dim != 768:
             skip_optimizer = True
         _, _, _, epoch_str = utils.load_checkpoint(ckpt_g, net_g, optim_g, skip_optimizer)

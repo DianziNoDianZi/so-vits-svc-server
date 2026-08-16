@@ -67,8 +67,8 @@ def _run_training(task):
     task.log_path = f'task_{task.id}.log'
     db.session.commit()
 
-    # 训练进度邮件监控：按 report_interval 步发一封进度报告（0=关闭）
-    # 任务级参数优先（训练页可设），无则用用户默认
+    # 训练进度监控：定期把日志解析出的 step/pct 写回 progress_msg（前端轮询显示），
+    # 并按 report_interval 步发一封进度邮件（0=关闭）。任务级参数优先。
     report_interval = int(params.get('report_interval') or getattr(task.user, 'report_interval', 0) or 0)
     _progress_stop = threading.Event()
     _progress_thread = None
@@ -79,9 +79,17 @@ def _run_training(task):
             try:
                 info = parse_training_log(task)
                 step = info.get('current_step') or 0
-                if report_interval <= 0 or step - last_report_step < report_interval:
-                    continue
-                if step <= 0:
+                stage = info.get('stage') or ''
+                stage_cn = {'resample': '重采样', 'config': '生成配置', 'feature': '提取特征',
+                            'sovits': '训练 SoVITS', 'diff': '训练扩散'}.get(stage, '')
+                # 实时进度写回 progress_msg，前端 status 轮询能看到
+                if step > 0:
+                    total = info.get('total_steps') or task.total_steps or 0
+                    pct = min(int(step * 100 / total), 99) if total else 0
+                    task.progress_msg = f'step {step}/{total} ({pct}%)' + (f' · {stage_cn}' if stage_cn else '')
+                    db.session.commit()
+                # 进度邮件（可选）
+                if report_interval <= 0 or step - last_report_step < report_interval or step <= 0:
                     continue
                 last_report_step = step
                 from notifier import notify_train_progress
@@ -90,14 +98,13 @@ def _run_training(task):
                     os.environ.get('SSVC_SERVER_URL', 'http://127.0.0.1:5000'),
                     step=step, total_steps=info.get('total_steps') or task.total_steps,
                     losses=info.get('last_loss', '-'),
-                    stage=info.get('stage') or '-',
+                    stage=stage_cn or '-',
                 )
             except Exception:
-                pass
+                db.session.rollback()
 
-    if report_interval > 0:
-        _progress_thread = threading.Thread(target=_progress_monitor, daemon=True)
-        _progress_thread.start()
+    _progress_thread = threading.Thread(target=_progress_monitor, daemon=True)
+    _progress_thread.start()
 
     from train_worker import run as train_run
 
