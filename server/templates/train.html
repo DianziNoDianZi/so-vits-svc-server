@@ -269,6 +269,7 @@
                     <div id="trbar" style="height:100%;width:{{ pct }}%;background:linear-gradient(90deg,#d29922,#e3b341);transition:width .5s"></div>
                 </div>
                 <div class="text-secondary small mt-2" id="trstep">step {{ current_step }} / {{ total_steps }}</div>
+                <div class="text-info small" id="treval">{% if eval_mel is not none %}验证 mel: {{ '%.4f'|format(eval_mel) }} @ step {{ eval_step }}{% endif %}</div>
                 <div class="mt-3">
                     <div class="d-flex align-items-center mb-1">
                         <span class="text-secondary small">损失曲线（G / D / FM）</span>
@@ -443,6 +444,8 @@ function regCkpt(tid) {
             document.getElementById('trpct').textContent = d.pct + '%';
             document.getElementById('trbar').style.width = (d.pct || 0) + '%';
             document.getElementById('trstep').textContent = 'step ' + d.current_step + ' / ' + d.total_steps;
+            var evalEl = document.getElementById('treval');
+            if (evalEl) evalEl.textContent = (d.eval_mel != null) ? ('验证 mel: ' + Number(d.eval_mel).toFixed(4) + ' @ step ' + (d.eval_step || 0)) : '';
             if (logEl && d.log_tail) {
                 logEl.textContent = d.log_tail;
                 if (d.log_tail.length >= lastLogLen) logEl.scrollTop = logEl.scrollHeight;

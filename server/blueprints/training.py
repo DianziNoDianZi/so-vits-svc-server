@@ -50,6 +50,7 @@ def train_page():
         log_content=info.get('log_tail', ''), pct=info.get('pct', 0),
         current_step=info.get('current_step', 0), total_steps=info.get('total_steps', 0),
         loss_data=json.dumps(info.get('loss_data', [])),
+        eval_mel=info.get('eval_mel'), eval_step=info.get('eval_step', 0),
         current_stage=info.get('stage', ''),
         stage_label=dict([(k, l) for k, l in [('resample', '重采样'), ('config', '生成配置'),
                                               ('feature', '提取特征'), ('sovits', '训练 SoVITS'),
@@ -281,6 +282,7 @@ def api_train_status(tid):
     return jsonify({'status': t.status, 'progress_msg': t.progress_msg,
                     'stage_label': info['stage'], 'pct': info['pct'],
                     'current_step': info['current_step'], 'total_steps': info['total_steps'],
+                    'eval_mel': info['eval_mel'], 'eval_step': info['eval_step'],
                     'log_tail': info['log_tail']})
 
 

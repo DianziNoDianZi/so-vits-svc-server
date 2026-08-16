@@ -244,6 +244,12 @@ def parse_training_log(task):
     # 训练脚本实际格式：Losses: [D, G, FM, mel, KL], step: N, lr: ...
     # 兼容旧格式：step 100 | G: 5.2 | D: 1.3 | mel: 0.41
     for line in lines:
+        # 验证集 loss（收炉判断的关键指标）：Eval Losses: [0.4123], step: 5000
+        em = _re.search(r'Eval Losses:\s*\[([\d.]+)\],\s*step:\s*(\d+)', line)
+        if em:
+            info['eval_mel'] = float(em.group(1))
+            info['eval_step'] = int(em.group(2))
+            continue
         point = None
         m = _re.search(r'Losses:\s*\[(.*?)\],\s*step:\s*(\d+)', line)
         if m:
