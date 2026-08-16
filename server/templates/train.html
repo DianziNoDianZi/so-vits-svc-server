@@ -272,11 +272,13 @@
                 <div class="mt-3">
                     <div class="d-flex align-items-center mb-1">
                         <span class="text-secondary small">损失曲线（G / D / FM）</span>
-                        <small class="text-secondary ms-auto" style="font-size:0.65rem;">滚轮缩放</small>
+                        <small class="text-secondary ms-auto" style="font-size:0.65rem;">滚轮缩放 · 拖拽平移</small>
+                        <button id="lossChartReset" type="button" class="btn btn-sm btn-outline-warning py-0 ms-2" style="font-size:0.65rem;display:none;">重置缩放</button>
                     </div>
                     <canvas id="lossChart" height="110"></canvas>
                     <div class="d-flex align-items-center mb-1 mt-2">
                         <small class="text-secondary" style="font-size:0.7rem;">Mel Loss（重建质量，独立 Y 轴）</small>
+                        <button id="melChartReset" type="button" class="btn btn-sm btn-outline-warning py-0 ms-auto" style="font-size:0.65rem;display:none;">重置缩放</button>
                     </div>
                     <canvas id="melChart" height="80"></canvas>
                 </div>
@@ -377,6 +379,25 @@ function regCkpt(tid) {
         plugins: Object.assign({legend: {labels: {color: '#adb5bd', font: {size: 10}}}, tooltip: {enabled: false}}, zoomCfg()),
         scales: { x: {ticks: {color: '#6c757d', font: {size: 8}, maxTicksLimit: 12}, grid: {color: '#343a40'}}, y: {ticks: {color: '#6c757d', font: {size: 9}}, grid: {color: '#495057'}} }
     };
+    function bindReset(chartInst, canvasEl, btnId) {
+        var btn = document.getElementById(btnId);
+        if (!btn || !canvasEl || !chartInst) return;
+        btn.onclick = function () {
+            chartInst.resetZoom();
+            btn.style.display = 'none';
+        };
+        canvasEl.addEventListener('mouseup', function () {
+            setTimeout(function () {
+                try {
+                    var z = chartInst.getZoomLevel();
+                    btn.style.display = (z && Math.abs(z - 1) > 0.001) ? '' : 'none';
+                } catch (e) { btn.style.display = ''; }
+            }, 50);
+        });
+        canvasEl.addEventListener('wheel', function () {
+            setTimeout(function () { btn.style.display = ''; }, 100);
+        });
+    }
     function mkCharts(data) {
         if (!data || !data.length) return;
         var labels = data.map(function(p){ return p.step; });
@@ -392,6 +413,7 @@ function regCkpt(tid) {
             ];
             if (hasFm) ds.push({label: 'FM Loss', data: data.map(function(p){ return p.fm != null ? p.fm : null; }), borderColor: '#ffc107', borderWidth: 1, pointRadius: 0, fill: false});
             lossChart = new Chart(cv.getContext('2d'), {type: 'line', data: {labels: labels, datasets: ds}, options: commonOpts});
+            if (zoomOk) bindReset(lossChart, cv, 'lossChartReset');
         } else if (lossChart) {
             lossChart.data.labels = labels;
             lossChart.data.datasets.forEach(function(s){
@@ -404,6 +426,7 @@ function regCkpt(tid) {
         if (mcv && hasMel) {
             if (!melChart) {
                 melChart = new Chart(mcv.getContext('2d'), {type: 'line', data: {labels: labels, datasets: [{label: 'Mel Loss', data: data.map(function(p){ return p.mel; }), borderColor: '#6f42c1', borderWidth: 1, pointRadius: 0, fill: false}]}, options: commonOpts});
+                if (zoomOk) bindReset(melChart, mcv, 'melChartReset');
             } else {
                 melChart.data.labels = labels;
                 melChart.data.datasets[0].data = data.map(function(p){ return p.mel != null ? p.mel : null; });
@@ -428,7 +451,7 @@ function regCkpt(tid) {
             if (d.status !== 'running') { clearInterval(timer); setTimeout(function(){ location.reload(); }, 1500); }
         }).catch(function(){});
         fetch('/api/train/' + tid + '/loss_chart.json').then(function(r){ return r.json(); }).then(function(d) {
-            if (d.loss_data && d.loss_data.length) mkCharts(d.loss_data.slice(-200));
+            if (d.loss_data && d.loss_data.length) mkCharts(d.loss_data);
         }).catch(function(){});
     }, 3000);
     {% endif %}

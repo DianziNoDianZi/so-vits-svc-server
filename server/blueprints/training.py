@@ -49,7 +49,7 @@ def train_page():
         active=active, history=history, resumable=resumable,
         log_content=info.get('log_tail', ''), pct=info.get('pct', 0),
         current_step=info.get('current_step', 0), total_steps=info.get('total_steps', 0),
-        loss_data=json.dumps(info.get('loss_data', [])[-200:]),
+        loss_data=json.dumps(info.get('loss_data', [])),
         current_stage=info.get('stage', ''),
         stage_label=dict([(k, l) for k, l in [('resample', '重采样'), ('config', '生成配置'),
                                               ('feature', '提取特征'), ('sovits', '训练 SoVITS'),
