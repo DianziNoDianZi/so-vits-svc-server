@@ -42,12 +42,23 @@ _current_proc = None
 
 
 def _find_audio_dir(root):
-    """递归查找包含音频文件最多的目录（兼容多层嵌套的 zip 结构）。"""
+    """找包含音频的目录。若 root 下音频分散在多个子目录（多说话人混训），
+    直接返回 root 本身，让 resample_into 递归收集全部；否则返回单个音频目录。"""
     best, best_count = None, -1
+    total = 0
+    subdirs_with_audio = 0
     for dirpath, _dirnames, filenames in os.walk(root):
         count = sum(1 for f in filenames if f.lower().endswith(AUDIO_EXTS))
+        total += count
+        if count > 0 and dirpath != root:
+            subdirs_with_audio += 1
         if count > best_count:
             best, best_count = dirpath, count
+    if best is None:
+        return None, 0
+    if subdirs_with_audio > 1:
+        # 多说话人/多目录：返回 root 让调用方递归收集全部音频
+        return root, total
     return best, best_count
 
 
@@ -317,28 +328,39 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
         feature_procs = 1 if _has_gpu else min(4, os.cpu_count() or 1)
 
         def resample_into(raw_dir, speaker_dir):
-            """把 raw_dir 里的音频统一重采样到 44.1kHz 单声道，跳过过短片段。"""
+            """把 raw_dir（含所有子目录）里的音频统一重采样到 44.1kHz 单声道，跳过过短片段。
+
+            递归遍历子目录：支持 zip 里多个说话人目录（混训底模），
+            所有说话人的音频都收进同一个 speaker 目录当一个人训。
+            """
             os.makedirs(speaker_dir, exist_ok=True)
             count = 0
             skipped_short = 0
             skipped_err = 0
-            for f in sorted(os.listdir(raw_dir)):
-                if not f.lower().endswith(AUDIO_EXTS):
-                    continue
-                src = os.path.join(raw_dir, f)
-                try:
-                    import soundfile as _sf
-                    dur = _sf.info(src).duration
-                except Exception:
-                    dur = None
-                if dur is not None and dur < MIN_AUDIO_SECONDS:
-                    skipped_short += 1
-                    continue
-                count += 1
-                dst = os.path.join(speaker_dir, Path(f).stem + '.wav')
-                subprocess.run([FFMPEG, '-y', '-i', src,
-                                '-ar', str(sr), '-ac', '1', dst],
-                               capture_output=True, encoding='utf-8', errors='replace')
+            seen = set()
+            for dirpath, _dirnames, filenames in os.walk(raw_dir):
+                for f in sorted(filenames):
+                    if not f.lower().endswith(AUDIO_EXTS):
+                        continue
+                    src = os.path.join(dirpath, f)
+                    try:
+                        import soundfile as _sf
+                        dur = _sf.info(src).duration
+                    except Exception:
+                        dur = None
+                    if dur is not None and dur < MIN_AUDIO_SECONDS:
+                        skipped_short += 1
+                        continue
+                    # 不同目录可能有同名文件，加序号前缀避免覆盖
+                    stem = Path(f).stem
+                    if stem in seen:
+                        stem = f'{stem}_{len(seen)}'
+                    seen.add(stem)
+                    count += 1
+                    dst = os.path.join(speaker_dir, stem + '.wav')
+                    subprocess.run([FFMPEG, '-y', '-i', src,
+                                    '-ar', str(sr), '-ac', '1', dst],
+                                   capture_output=True, encoding='utf-8', errors='replace')
             log(f'重采样: 保留 {count} 个, 跳过 <{MIN_AUDIO_SECONDS}s 片段 {skipped_short} 个')
             return count
 
@@ -506,13 +528,26 @@ def run(task_id, speaker, dataset_zip, log_path='', model_type='sovits', batch_s
                 cfg['train']['fp16_run'] = bool(fp16_run)
             log(f'fp16_run={cfg["train"]["fp16_run"]}, max_steps={total_steps}, auto_stop={auto_stop}')
 
-            # 使用预训练底模（仅当任务目录中没有已有 checkpoint 时）
+            # 使用预训练底模（仅当任务目录中没有已有 checkpoint 时）。
+            # 架构专属底模优先（rvc → G_0_rvc.pth / D_0_rvc.pth），
+            # 找不到再回退 v1 通用底模。v1 底模对 rvc 只有解码器可用，
+            # 特征投影层（pre/emb_uv/emb_vol）会随机初始化，所以 rvc 建议训专属底模。
             if not _latest_checkpoint(data_dir, 'G_', '.pth'):
-                for base in ('G_0.pth', 'D_0.pth'):
+                arch_base = {
+                    'rvc': ('G_0_rvc.pth', 'D_0_rvc.pth'),
+                }.get(arch, ('G_0.pth', 'D_0.pth'))
+                for base in arch_base:
                     src = os.path.join(PROJECT_DIR, 'pretrain', base)
                     if os.path.exists(src):
                         shutil.copy2(src, os.path.join(data_dir, base))
                         log(f'使用预训练底模: {base}')
+                    else:
+                        # 专属底模缺失 → 回退通用 v1 底模（解码器仍可复用）
+                        fallback = 'G_0.pth' if base.startswith('G_') else 'D_0.pth'
+                        fb_src = os.path.join(PROJECT_DIR, 'pretrain', fallback)
+                        if os.path.exists(fb_src):
+                            shutil.copy2(fb_src, os.path.join(data_dir, fallback))
+                            log(f'未找到 {base}，回退通用底模: {fallback}')
             else:
                 log('检测到已有 checkpoint，跳过底模')
 
