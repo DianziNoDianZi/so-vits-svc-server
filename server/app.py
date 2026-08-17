@@ -55,7 +55,8 @@ def migrate_db():
             db.session.execute(sa.text(f'ALTER TABLE model ADD COLUMN {col} {typ}'))
     try:
         qcols = [c['name'] for c in inspector.get_columns('user_quota')]
-        for col, typ in [('max_daily_tasks', 'INTEGER'), ('max_cpu_cores', 'INTEGER')]:
+        for col, typ in [('max_daily_tasks', 'INTEGER'), ('max_cpu_cores', 'INTEGER'),
+                         ('rt_max_sessions', 'INTEGER')]:
             if col not in qcols:
                 db.session.execute(sa.text(f'ALTER TABLE user_quota ADD COLUMN {col} {typ}'))
     except Exception:

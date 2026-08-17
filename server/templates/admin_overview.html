@@ -53,6 +53,17 @@
             </div>
         </div>
     </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body text-center py-2">
+                <div class="text-secondary small">实时变声</div>
+                <div class="{{ 'text-success' if health.rt_ws_alive else ('text-warning' if health.rt_enabled else 'text-secondary') }}">
+                    {{ '运行中 (:5001)' if health.rt_ws_alive else ('已开关但服务未启动' if health.rt_enabled else '已关闭') }}
+                </div>
+                <a href="{{ url_for('admin_settings') }}" class="btn btn-sm btn-outline-secondary mt-1">开关设置</a>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div class="row mt-3 g-2">

@@ -76,6 +76,14 @@
                         <label class="form-label small">保留备份份数</label>
                         <input type="number" name="backup_keep" class="form-control bg-dark text-light border-secondary" value="{{ site.backup_keep }}" min="1">
                     </div>
+                    <hr class="border-secondary">
+                    <h6 class="text-secondary">实时变声（WebSocket）</h6>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" name="rt_enabled" value="1" class="form-check-input" id="rtEnabled"
+                               {{ 'checked' if site.rt_enabled else '' }}>
+                        <label class="form-check-label" for="rtEnabled">启用实时变声服务（:5001）</label>
+                        <small class="text-secondary d-block">需已安装 gevent/gevent-websocket 并运行 ssvc-ws 服务；关闭后新连接被拒</small>
+                    </div>
                     <button type="submit" class="btn btn-primary w-100">保存站点设置</button>
                 </form>
             </div>

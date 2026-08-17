@@ -43,6 +43,7 @@ class UserQuota(db.Model):
     max_private_models = db.Column(db.Integer, default=3)
     priority = db.Column(db.Integer, default=1)
     results_retention_days = db.Column(db.Integer, default=7)
+    rt_max_sessions = db.Column(db.Integer, default=1)   # 实时变声最大并发会话
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

@@ -89,11 +89,17 @@ def admin_index():
     except Exception:
         torch_cuda = False
     daemon_alive = bool(scheduler.inference_daemon_proc and scheduler.inference_daemon_proc.is_alive())
+    # 实时变声：开关 + ws_server 是否在跑（探测 AF_UNIX socket 文件）
+    rt_enabled = get_setting('rt_enabled', '1') == '1'
+    rt_sock = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs', 'ssvc_stream.sock')
+    rt_ws_alive = rt_enabled and os.path.exists(rt_sock)
     health = {
         'daemon_alive': daemon_alive,
         'gpu': '可用' if torch_cuda else '不可用',
         'paused': get_setting('scheduler_paused', '0') == '1',
         'queue_depth': Task.query.filter(Task.status.in_(['pending', 'claimed'])).count(),
+        'rt_enabled': rt_enabled,
+        'rt_ws_alive': rt_ws_alive,
     }
     from services.backup import backup_dir
     backups = []
@@ -561,6 +567,7 @@ def admin_settings():
             set_setting('rate_upload', request.form.get('rate_upload', '0'))
             set_setting('backup_interval_hours', request.form.get('backup_interval_hours', '24'))
             set_setting('backup_keep', request.form.get('backup_keep', '10'))
+            set_setting('rt_enabled', '1' if request.form.get('rt_enabled') else '0')
             from services.audit import audit_log
             audit_log('settings_site', f'站点设置已保存: 开放注册={get_setting("allow_registration")} '
                                        f'邀请码模式={get_setting("invite_mode", "off")}')
@@ -598,6 +605,7 @@ def admin_settings():
         'rate_upload': get_setting('rate_upload', 0),
         'backup_interval_hours': get_setting('backup_interval_hours', 24),
         'backup_keep': get_setting('backup_keep', 10),
+        'rt_enabled': get_setting('rt_enabled', '1') == '1',
     }
     from services.training import training_enabled
     train = {'enabled': training_enabled(), 'cpu_cores': get_setting('train_cpu_cores', '0')}

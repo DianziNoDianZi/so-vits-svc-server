@@ -26,6 +26,10 @@ SOCK_PATH = os.path.join(SERVER_DIR, 'logs', 'ssvc_stream.sock')
 IDLE_TIMEOUT = 60          # 无音频断连（秒）
 MAX_SESSION_SECONDS = 1800  # 单会话时长上限（秒）
 
+# 进程内活跃流式会话表（ws_server 单进程内有效，用于并发配额统计）
+_rt_sessions = {}
+_rt_sessions_lock = __import__('threading').Lock()
+
 
 def build_mini_app():
     from flask import Flask
@@ -85,8 +89,16 @@ def handle_ws(app, ws):
             pass
         ws.close()
         return
-    from services.quota import current_quota
+    from services.quota import current_quota, get_setting
     with app.app_context():
+        # 全局开关
+        if get_setting('rt_enabled', '1') != '1':
+            try:
+                ws.send('{"op":"error","error":"rt_disabled"}')
+            except Exception:
+                pass
+            ws.close()
+            return
         quota = current_quota(user)
     if not quota.enabled:
         try:
@@ -95,6 +107,19 @@ def handle_ws(app, ws):
             pass
         ws.close()
         return
+    # 每用户实时变声并发配额（rt_max_sessions，默认 1）
+    rt_max = int(getattr(quota, 'rt_max_sessions', None) or 1)
+    with _rt_sessions_lock:
+        active = sum(1 for s in _rt_sessions.values() if s.get('user_id') == user.id and not s.get('done'))
+        if active >= max(rt_max, 1):
+            try:
+                ws.send('{"op":"error","error":"session_limit"}')
+            except Exception:
+                pass
+            ws.close()
+            return
+        _sid = id(ws)
+        _rt_sessions[_sid] = {'user_id': user.id, 'username': user.username, 'started': time.time(), 'done': False}
 
     # 等待客户端发 init 帧（含 config_id + 流式参数）
     try:
@@ -254,6 +279,12 @@ def handle_ws(app, ws):
             ws.close()
         except Exception:
             pass
+        # 释放会话配额
+        with _rt_sessions_lock:
+            _sid = id(ws)
+            if _sid in _rt_sessions:
+                _rt_sessions[_sid]['done'] = True
+                _rt_sessions[_sid]['ended'] = time.time()
 
 
 def main():

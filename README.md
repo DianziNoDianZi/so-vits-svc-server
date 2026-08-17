@@ -27,6 +27,7 @@
 - **公告**：管理员发布/置顶/群发邮件，用户在首页与公告页查看
 - **结果对象级下载**：按任务归属鉴权下载，结果默认保留 7 天（可配置）后自动清理
 - **推理性能**：常驻 daemon + LRU 模型缓存、ONNX 加速（失败回退 PyTorch）
+- **实时变声（WebSocket）**：客户端麦克风 → `ws://:5001` → 服务器实时变声 → 回传播放；44.1kHz，`chunk_seconds` 可配（0.1~2.0s），API Key 鉴权；准实时（CPU 约 1~2s）
 - **训练（可选模块，仅管理员）**：后台开关控制；SoVITS / SoVITS+扩散、续训、停止、注册 checkpoint 为推理模型、进度轮询
 - **管理员后台**：总览（健康/暂停/待审核/磁盘）、用户配额、模型审核、全局任务队列（可停止/删除/导出 CSV）、存储与孤儿文件、公告、站点设置、训练开关
 - **长线运营**：
@@ -293,6 +294,7 @@ curl https://你的域名/api/v1/configs -H "X-API-Key: $KEY"
 | GET | `/api/v1/configs` | 我的推理配置（含参数） |
 | GET | `/api/v1/me` | 我的信息 + 配额 + 今日用量 |
 | GET | `/api/v1/system` | 系统状态（daemon/队列/调度/CPU/内存/磁盘/统计） |
+| WS | `ws://host:5001/api/v1/ws/stream` | 实时变声（见 [docs/realtime_vc.md](docs/realtime_vc.md)） |
 
 错误码：`401` Key 无效 · `403` 账号禁用或资源不属于你 · `404` 不存在 · `429` 限流或配额满 · `400` 参数错误。
 
@@ -301,8 +303,10 @@ curl https://你的域名/api/v1/configs -H "X-API-Key: $KEY"
 **Linux 服务管理（systemd）**
 
 ```bash
-systemctl status ssvc          # 查看状态
+systemctl status ssvc          # 查看状态（HTTP 服务 :5000）
 systemctl restart ssvc         # 重启（更新代码后必须）
+systemctl status ssvc-ws       # 查看状态（实时变声 WebSocket :5001）
+systemctl restart ssvc-ws      # 重启 WebSocket 服务
 journalctl -u ssvc -n 100      # 查看服务日志（systemd 捕获的 stdout）
 tail -f server/logs/app.log    # 查看结构化应用日志（轮转）
 ```
@@ -310,8 +314,10 @@ tail -f server/logs/app.log    # 查看结构化应用日志（轮转）
 **更新代码**
 
 ```bash
-cd ~/server/so-vits-svc-inference && git pull origin master && systemctl restart ssvc
+cd ~/server/so-vits-svc-inference && git pull origin master && systemctl restart ssvc ssvc-ws
 ```
+
+**实时变声**：依赖 `gevent`/`gevent-websocket`（requirements 已含，重跑部署脚本或手动 `pip install gevent gevent-websocket`）。客户端接口协议见 [docs/realtime_vc.md](docs/realtime_vc.md)。
 
 **数据安全**：模型权重、数据库、密钥、上传文件、**备份**（`server/backups/`）、**日志**（`server/logs/`）均不入 git（见 .gitignore）。更新代码不会覆盖 `uploads/`、`pretrain/`、`data.db`、`backups/`。
 
