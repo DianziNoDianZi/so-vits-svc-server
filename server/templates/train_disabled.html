@@ -3,7 +3,7 @@
 <div class="card bg-dark border-secondary mt-4" style="max-width:560px">
     <div class="card-body text-center py-5">
         <h4>训练功能未启用</h4>
-        <p class="text-secondary mt-2">训练是一个可选功能，当前服务器未开启。开启后即可上传数据集训练 SoVITS 模型。</p>
+        <p class="text-secondary mt-2">训练是一个可选功能，当前服务器未开启。你可以联系服务器的管理员开启，开启后即可上传数据集训练 SoVITS 模型。</p>
         <form method="POST" action="{{ url_for('train_enable') }}" class="mt-3">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-primary" onclick="return confirm('开启训练功能？')">开启训练功能</button>
