@@ -25,6 +25,7 @@
                     <a class="nav-link" href="{{ url_for('task_list') }}" data-nav="tasks"><i class="bi bi-list-task"></i> 任务</a>
                     <a class="nav-link" href="{{ url_for('usage') }}" data-nav="usage"><i class="bi bi-graph-up-arrow"></i> 用量</a>
                     <a class="nav-link" href="{{ url_for('status') }}" data-nav="status"><i class="bi bi-heart-pulse"></i> 状态</a>
+                    <a class="nav-link" href="{{ url_for('realtime_vc') }}" data-nav="rt"><i class="bi bi-mic"></i> 实时变声</a>
                     {% if current_user.role == 'admin' %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown" role="button" aria-expanded="false" data-nav="admin"><i class="bi bi-shield-lock"></i> 管理</a>
@@ -36,6 +37,7 @@
                             <li><a class="dropdown-item" href="{{ url_for('admin_tasks') }}"><i class="bi bi-list-check me-2"></i>任务队列</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin_storage') }}"><i class="bi bi-hdd me-2"></i>存储清理</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin_pretrain') }}"><i class="bi bi-box-arrow-down me-2"></i>预训练</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('admin_rt') }}"><i class="bi bi-mic me-2"></i>实时变声</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin_announcements') }}"><i class="bi bi-megaphone me-2"></i>公告</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin_settings') }}"><i class="bi bi-sliders me-2"></i>站点设置</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin_email_templates') }}"><i class="bi bi-envelope me-2"></i>邮件模板</a></li>

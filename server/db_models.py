@@ -155,6 +155,21 @@ class Announcement(db.Model):
     author = db.relationship('User')
 
 
+class RealtimeSession(db.Model):
+    """实时变声活跃会话（ws_server 进程写，admin 页读，用于并发限制与展示）。"""
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    username = db.Column(db.String(80), nullable=True)
+    config_id = db.Column(db.Integer, nullable=True)
+    model_name = db.Column(db.String(200), nullable=True)
+    status = db.Column(db.String(20), default='active')   # active / closed
+    started_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_seen_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    closed_at = db.Column(db.DateTime, nullable=True)
+
+    user = db.relationship('User')
+
+
 class InviteCode(db.Model):
     code = db.Column(db.String(40), primary_key=True)
     used_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)

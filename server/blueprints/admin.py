@@ -777,3 +777,64 @@ def admin_backup_download(filename):
     if not os.path.exists(full):
         abort(404)
     return send_file(full, as_attachment=True, download_name=os.path.basename(filename))
+
+
+@bp.route('/admin/rt', methods=['GET', 'POST'], endpoint='admin_rt')
+@login_required
+def admin_rt():
+    """实时变声管理：全局开关/并发/时长 + 每用户配额 + 活跃会话。"""
+    _guard()
+    from db_models import RealtimeSession
+    from services.audit import audit_log
+
+    if request.method == 'POST':
+        if request.form.get('action') == 'settings':
+            set_setting('rt_enabled', '1' if request.form.get('rt_enabled') else '0')
+            set_setting('rt_max_total', request.form.get('rt_max_total', '1'))
+            set_setting('rt_session_seconds', request.form.get('rt_session_seconds', '1800'))
+            audit_log('rt_settings', f'实时变声设置: 开关={get_setting("rt_enabled")} '
+                                     f'全局并发={get_setting("rt_max_total")} 时长={get_setting("rt_session_seconds")}s')
+            flash('实时变声设置已保存', 'success')
+        elif request.form.get('action') == 'quota':
+            uid = request.form.get('user_id', type=int)
+            u = db.session.get(User, uid) if uid else None
+            if u:
+                q = current_quota(u)
+                q.rt_max_sessions = _i('rt_max_sessions', 1)
+                db.session.commit()
+                audit_log('rt_quota', f'用户 {u.username} 实时变声并发配额={q.rt_max_sessions}')
+                flash(f'已更新 {u.username} 的实时变声配额', 'success')
+        elif request.form.get('action') == 'close':
+            sid = request.form.get('session_id', type=int)
+            s = db.session.get(RealtimeSession, sid) if sid else None
+            if s and s.status == 'active':
+                s.status = 'closed'
+                s.closed_at = datetime.utcnow()
+                db.session.commit()
+                audit_log('rt_close', f'管理员关闭实时变声会话 #{sid}')
+                flash(f'已关闭会话 #{sid}', 'success')
+            else:
+                flash('会话不存在或已关闭', 'warning')
+        return redirect(url_for('admin_rt'))
+
+    # 配置
+    cfg = {
+        'rt_enabled': get_setting('rt_enabled', '1') == '1',
+        'rt_max_total': get_setting('rt_max_total', 1),
+        'rt_session_seconds': get_setting('rt_session_seconds', 1800),
+    }
+    # 每用户配额
+    quotas = []
+    for u in User.query.order_by(User.id.asc()).all():
+        q = current_quota(u)
+        rt_active = RealtimeSession.query.filter(
+            RealtimeSession.user_id == u.id, RealtimeSession.status == 'active').count()
+        quotas.append({'user': u, 'rt_max': getattr(q, 'rt_max_sessions', None) or 1, 'rt_active': rt_active})
+    # 活跃会话
+    active_sessions = (RealtimeSession.query.filter_by(status='active')
+                       .order_by(RealtimeSession.started_at.desc()).all())
+    # 最近关闭
+    recent_closed = (RealtimeSession.query.filter_by(status='closed')
+                     .order_by(RealtimeSession.closed_at.desc()).limit(10).all())
+    return render_template('admin_rt.html', cfg=cfg, quotas=quotas,
+                           active_sessions=active_sessions, recent_closed=recent_closed)

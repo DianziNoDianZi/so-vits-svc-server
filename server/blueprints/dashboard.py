@@ -114,3 +114,23 @@ def usage():
     return render_template('usage.html', quota=quota, running_cnt=running_cnt, queued_cnt=queued_cnt,
                            used_today=used_today, private_cnt=private_cnt, storage_bytes=storage_bytes,
                            storage_limit=quota.storage_quota_bytes or 0)
+
+
+@bp.route('/rt', endpoint='realtime_vc')
+@login_required
+def realtime_vc():
+    """实时变声页：选择推理配置 + 连接说明 + 文档入口。"""
+    from services.quota import get_setting
+    from blueprints.inference import _build_inference_config_items
+    from db_models import InferenceConfig
+    from services.quota import current_quota as _cq
+    configs = InferenceConfig.query.filter_by(user_id=current_user.id).all()
+    config_items, hidden = _build_inference_config_items(configs, current_user)
+    rt_enabled = get_setting('rt_enabled', '1') == '1'
+    quota = _cq(current_user)
+    rt_max = int(getattr(quota, 'rt_max_sessions', None) or 1)
+    # API Key 是否存在
+    from db_models import ApiToken
+    has_key = ApiToken.query.filter_by(user_id=current_user.id, revoked_at=None).first() is not None
+    return render_template('rt.html', configs=config_items, hidden=hidden,
+                           rt_enabled=rt_enabled, rt_max=rt_max, has_key=has_key)
