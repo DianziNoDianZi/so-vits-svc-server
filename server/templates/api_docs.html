@@ -44,8 +44,24 @@ curl -o result.wav https://你的域名/api/v1/tasks/42/result \
             <tr><td><span class="badge bg-info">GET</span></td><td><code>/api/v1/configs</code></td><td>我的推理配置列表（含参数）</td></tr>
             <tr><td><span class="badge bg-info">GET</span></td><td><code>/api/v1/me</code></td><td>我的信息 + 配额 + 今日用量</td></tr>
             <tr><td><span class="badge bg-info">GET</span></td><td><code>/api/v1/system</code></td><td>系统状态（daemon/队列/调度暂停/统计）</td></tr>
+            <tr><td><span class="badge bg-warning">WS</span></td><td><code>ws://host:5001/api/v1/ws/stream</code></td><td>实时变声（麦克风→变声→回放），见下方协议</td></tr>
             </tbody>
         </table>
+    </div>
+</div>
+
+<div class="card bg-dark border-secondary mt-3">
+    <div class="card-body">
+        <h5 class="card-title">实时变声 WebSocket</h5>
+        <p class="text-secondary small mb-2">准实时变声（约 1~2s 延迟）。完整协议见 <a href="https://github.com/DianziNoDianZi/so-vits-svc-server/blob/master/docs/realtime_vc.md" class="text-info" target="_blank">docs/realtime_vc.md</a></p>
+        <pre class="p-2 rounded small mb-0" style="overflow-x:auto;background:#0d1117;color:#e6edf3;border:1px solid #30363d">连接: ws://host:5001/api/v1/ws/stream?api_key=KEY
+上行: 44.1kHz 单声道 float32 PCM（麦克风块，建议 20~40ms）
+下行: 44.1kHz 单声道 float32 PCM（变声后）
+控制: 文本 JSON
+  {"op":"init","config_id":1,"chunk_seconds":0.363,...} → {"op":"ready"}
+  {"op":"ping"} → {"op":"pong"}
+  {"op":"stop"} / {"op":"close"}
+限制: 全局 1 会话 · 无音频 60s 断连 · 单会话最长 30 分钟</pre>
     </div>
 </div>
 

@@ -220,10 +220,33 @@ EOF
     systemctl daemon-reload
     systemctl enable ssvc
     systemctl restart ssvc
+    # 实时变声 WebSocket 服务（gevent，端口 5001）
+    cat > /etc/systemd/system/ssvc-ws.service <<EOF
+[Unit]
+Description=So-VITS-SVC Realtime VC WebSocket
+After=ssvc.service network.target
+
+[Service]
+Type=simple
+WorkingDirectory=$SERVER_DIR
+ExecStart=$PY_BIN ws_server.py
+Restart=on-failure
+RestartSec=5
+Environment=PORT_WS=5001
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable ssvc-ws
+    systemctl restart ssvc-ws
 else
     cd "$SERVER_DIR"
     nohup "$PY_BIN" app.py > server.out 2>&1 &
     echo $! > server.pid
+    nohup "$PY_BIN" ws_server.py > ws_server.out 2>&1 &
+    echo $! > ws_server.pid
 fi
 
 echo ""

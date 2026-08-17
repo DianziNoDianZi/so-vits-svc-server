@@ -11,7 +11,10 @@ import gc
 import json
 import os
 import sys
+import threading
+import traceback
 from collections import OrderedDict
+from multiprocessing.connection import Listener
 
 import soundfile
 import torch
@@ -73,7 +76,9 @@ class _NewlineTqdm(_tqdm_mod.tqdm):
 _tqdm_mod.tqdm = _NewlineTqdm
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_DIR)
+sys.path.insert(0, SERVER_DIR)
 
 
 class OnnxGenerator:
@@ -256,6 +261,18 @@ def _run_inference(p, svc, device):
 
 def main(q, done_q, cache_size):
     cache = ModelCache(cache_size)
+    # 流式变声与文件任务共用的全局推理锁：一次只跑一个推理
+    infer_lock = threading.Lock()
+    _stream_active = threading.Event()
+
+    def _start_stream_listener():
+        try:
+            _stream_listener(cache, infer_lock, _stream_active)
+        except Exception:
+            traceback.print_exc()
+
+    threading.Thread(target=_start_stream_listener, daemon=True).start()
+
     while True:
         item = q.get()
         if item is None:
@@ -263,32 +280,33 @@ def main(q, done_q, cache_size):
         task_id, payload = item
         success, err = False, None
         try:
-            device_pref = payload.get('device', 'auto')
-            cores = int(payload.get('max_cpu_cores') or 0)
-            if device_pref == 'cpu':
-                device = 'cpu'
-                torch.set_num_threads(cores if cores > 0 else 2)
-            elif device_pref == 'cuda':
-                device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            else:
-                device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            if device == 'cpu':
-                torch.set_num_threads(cores if cores > 0 else 2)
+            with infer_lock:
+                device_pref = payload.get('device', 'auto')
+                cores = int(payload.get('max_cpu_cores') or 0)
+                if device_pref == 'cpu':
+                    device = 'cpu'
+                    torch.set_num_threads(cores if cores > 0 else 2)
+                elif device_pref == 'cuda':
+                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                else:
+                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                if device == 'cpu':
+                    torch.set_num_threads(cores if cores > 0 else 2)
 
-            # 实际设备写回 payload，参与缓存 key（避免 cuda/cpu 混用命中）
-            payload = dict(payload)
-            payload['device_resolved'] = device
-            old_cwd = os.getcwd()
-            os.chdir(PROJECT_DIR)
-            try:
-                key = _model_key(payload)
-                svc = cache.get(key)
-                if svc is None:
-                    svc = _build_svc(payload, device)
-                    cache.put(key, svc)
-                _run_inference(payload, svc, device)
-            finally:
-                os.chdir(old_cwd)
+                # 实际设备写回 payload，参与缓存 key（避免 cuda/cpu 混用命中）
+                payload = dict(payload)
+                payload['device_resolved'] = device
+                old_cwd = os.getcwd()
+                os.chdir(PROJECT_DIR)
+                try:
+                    key = _model_key(payload)
+                    svc = cache.get(key)
+                    if svc is None:
+                        svc = _build_svc(payload, device)
+                        cache.put(key, svc)
+                    _run_inference(payload, svc, device)
+                finally:
+                    os.chdir(old_cwd)
             success = True
         except KeyboardInterrupt:
             # 用户停止：中断当前推理，模型缓存保留，继续处理下一个任务
@@ -302,6 +320,136 @@ def main(q, done_q, cache_size):
                 done_q.put((task_id, success, err))
             except Exception:
                 pass
+
+
+def _stream_listener(cache, infer_lock, stream_active):
+    """AF_UNIX socket 端点：接收 ws_server 的流式变声会话。
+
+    协议（multiprocessing.connection，消息自带分帧）：
+      -> {op:'init', payload:{...model/流式参数...}}
+      -> {op:'infer', audio: <bytes float32 44.1k>}
+      -> {op:'close'}
+      <- {ok:bool, error?} 或 {ok:bool, audio: <bytes float32 44.1k>}
+    """
+    from services.streaming import DaemonStreamingVC
+    sock_path = os.path.join(SERVER_DIR, 'logs', 'ssvc_stream.sock')
+    try:
+        os.makedirs(os.path.dirname(sock_path), exist_ok=True)
+        if os.path.exists(sock_path):
+            os.remove(sock_path)
+        listener = Listener(sock_path, family='AF_UNIX')
+    except Exception:
+        traceback.print_exc()
+        return
+
+    while True:
+        try:
+            conn = listener.accept()
+        except Exception:
+            continue
+        # 每次连接独立线程处理，但全局只允许一个活动流式会话
+        if stream_active.is_set():
+            try:
+                conn.send({'ok': False, 'error': 'busy'})
+            except Exception:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+            continue
+        threading.Thread(target=_handle_stream_conn,
+                         args=(conn, cache, infer_lock, stream_active),
+                         daemon=True).start()
+
+
+def _handle_stream_conn(conn, cache, infer_lock, stream_active):
+    stream_active.set()
+    try:
+        first = conn.recv()
+        if not isinstance(first, dict) or first.get('op') != 'init':
+            conn.send({'ok': False, 'error': 'expected init'})
+            return
+        payload = first.get('payload') or {}
+        p = dict(payload)
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        p['device_resolved'] = device
+        old_cwd = os.getcwd()
+        os.chdir(PROJECT_DIR)
+        try:
+            key = _model_key(p)
+            svc = cache.get(key)
+            if svc is None:
+                svc = _build_svc(p, device)
+                cache.put(key, svc)
+            speaker = payload.get('speaker') or (list(svc.spk2id.keys())[0] if svc.spk2id else None)
+            if not speaker:
+                conn.send({'ok': False, 'error': 'no speaker'})
+                return
+            vc = DaemonStreamingVC(
+                svc, speaker,
+                tran=int(payload.get('tran') or 0),
+                auto_predict_f0=bool(payload.get('auto_predict_f0', False)),
+                noice_scale=float(payload.get('noice_scale') or 0.4),
+                f0_predictor=payload.get('f0_predictor') or 'pm',
+                k_step=int(payload.get('k_step') or 0),
+                cluster_infer_ratio=float(payload.get('cluster_ratio') or 0),
+                chunk_seconds=float(payload.get('chunk_seconds') or 0.363),
+            )
+        except Exception:
+            traceback.print_exc()
+            try:
+                conn.send({'ok': False, 'error': 'init failed'})
+            except Exception:
+                pass
+            return
+        finally:
+            os.chdir(old_cwd)
+        conn.send({'ok': True})
+        # 推理循环
+        while True:
+            try:
+                msg = conn.recv()
+            except (EOFError, OSError):
+                break
+            if not isinstance(msg, dict):
+                break
+            op = msg.get('op')
+            if op == 'close':
+                break
+            if op == 'infer':
+                audio = msg.get('audio')
+                if audio is None:
+                    continue
+                import numpy as np
+                chunk = np.frombuffer(bytes(audio), dtype=np.float32)
+                try:
+                    with infer_lock:
+                        out = vc.feed(chunk)
+                    if out is None:
+                        # 未攒满一个窗口，暂无输出
+                        conn.send({'ok': True, 'pending': True})
+                    else:
+                        conn.send({'ok': True, 'audio': out.astype('<f4').tobytes()})
+                except Exception:
+                    traceback.print_exc()
+                    try:
+                        conn.send({'ok': False, 'error': 'infer failed'})
+                    except Exception:
+                        pass
+                    break
+            else:
+                break
+    except (EOFError, OSError):
+        pass
+    except Exception:
+        traceback.print_exc()
+    finally:
+        stream_active.clear()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

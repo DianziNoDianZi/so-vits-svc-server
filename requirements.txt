@@ -1,4 +1,4 @@
-# ===== 鎺ㄧ悊 + 璁粌鏍稿績 =====
+# ===== 推理 + 训练核心 =====
 torch
 torchaudio
 librosa==0.10.1
@@ -28,10 +28,14 @@ onnxoptimizer
 SQLAlchemy
 Flask-Migrate
 
-# ===== Flask 鏈嶅姟 =====
+# ===== Flask 服务 =====
 Flask
 Flask_Cors
 flask-login
 flask-sqlalchemy
 waitress
 psutil
+
+# ===== 实时变声 WebSocket =====
+gevent
+gevent-websocket
