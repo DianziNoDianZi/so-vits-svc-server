@@ -22,6 +22,60 @@
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
+body.app-body {
+  background-color: var(--site-bg, var(--bg)) !important;
+  background-image: var(--site-background-image, none);
+  --card-background: rgba(22, 27, 34, var(--card-opacity, 0.92));
+  background-attachment: fixed;
+  background-position: center;
+  background-size: cover;
+}
+
+body.app-body[data-theme="light"] {
+  --bg: #f4f6f8;
+  --bg-elevated: rgba(255, 255, 255, var(--card-opacity, 0.92));
+  --bg-input: #ffffff;
+  --border: #d8dee4;
+  --border-strong: #afb8c1;
+  --text: #24292f;
+  --text-muted: #57606a;
+  --text-strong: #1f2328;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --card-background: rgba(255, 255, 255, var(--card-opacity, 0.92));
+  --green: #1a7f37;
+  --red: #cf222e;
+  --amber: #9a6700;
+  --shadow: 0 1px 3px rgba(31, 35, 40, 0.12);
+}
+
+body.app-body[data-theme="light"] .bg-dark:not(.card),
+body.app-body[data-theme="light"] .text-light,
+body.app-body[data-theme="light"] .table-dark {
+  background-color: transparent !important;
+  color: var(--text) !important;
+}
+body.app-body[data-theme="light"] .table-dark {
+  --bs-table-bg: transparent;
+  --bs-table-striped-bg: rgba(31, 35, 40, 0.04);
+  --bs-table-hover-bg: rgba(56, 139, 253, 0.06);
+  --bs-table-color: var(--text);
+  --bs-table-striped-color: var(--text);
+  --bs-table-hover-color: var(--text-strong);
+}
+body.app-body[data-theme="light"] .table-dark > :not(caption) > * > * {
+  background-color: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+body.app-body[data-theme="light"] .table-dark > tbody > tr:nth-of-type(odd) > * {
+  background-color: var(--bs-table-striped-bg);
+}
+body.app-body[data-theme="light"] .list-group-item.bg-dark {
+  background-color: var(--card-background) !important;
+  color: var(--text) !important;
+}
+body.app-body[data-theme="light"] .btn-close { filter: none; }
+
 * { scrollbar-width: thin; scrollbar-color: #30363d transparent; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
@@ -69,7 +123,7 @@ a:hover { color: #79b8ff; }
 
 /* ---------- 卡片 ---------- */
 .card {
-  background: var(--bg-elevated) !important;
+  background: var(--card-background, var(--bg-elevated)) !important;
   border: 1px solid var(--border) !important;
   border-radius: var(--radius) !important;
 }

@@ -3,10 +3,12 @@ import csv
 import io
 import json
 import os
+import uuid
 from datetime import datetime, timedelta
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, send_file, Response
 from flask_login import login_required, current_user
+from werkzeug.utils import secure_filename
 
 from authorization import is_admin
 from extensions import db
@@ -27,6 +29,33 @@ def _guard():
 def _upload():
     from flask import current_app
     return current_app.config['UPLOAD_FOLDER']
+
+
+_BACKGROUND_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
+
+
+def _save_background(file):
+    filename = secure_filename(file.filename or '')
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in _BACKGROUND_EXTENSIONS:
+        return None
+    if request.content_length and request.content_length > 8 * 1024 * 1024:
+        return None
+    background_dir = os.path.join(_upload(), 'backgrounds')
+    os.makedirs(background_dir, exist_ok=True)
+    saved_name = f'{uuid.uuid4().hex}{ext}'
+    file.save(os.path.join(background_dir, saved_name))
+    return saved_name
+
+
+@bp.route('/site-background/<path:filename>', endpoint='site_background')
+def site_background(filename):
+    if os.path.basename(filename) != filename:
+        abort(404)
+    path = os.path.join(_upload(), 'backgrounds', filename)
+    if not os.path.isfile(path) or os.path.splitext(filename)[1].lower() not in _BACKGROUND_EXTENSIONS:
+        abort(404)
+    return send_file(path)
 
 
 _MODEL_FILE_ATTRS = {
@@ -554,6 +583,36 @@ def admin_settings():
         if request.form.get('action') == 'site':
             set_setting('allow_registration', '1' if request.form.get('allow_registration') else '0')
             set_setting('icp_record', request.form.get('icp_record', '').strip())
+            theme = request.form.get('theme', 'dark')
+            set_setting('theme', theme if theme in ('dark', 'light') else 'dark')
+            accent = request.form.get('accent_color', '#388bfd').strip()
+            if not (len(accent) == 7 and accent.startswith('#') and all(c in '0123456789abcdefABCDEF' for c in accent[1:])):
+                accent = '#388bfd'
+            set_setting('accent_color', accent)
+            set_setting('site_name', request.form.get('site_name', '').strip()[:80])
+            background_color = request.form.get('background_color', '#0d1117').strip()
+            if not (len(background_color) == 7 and background_color.startswith('#')
+                    and all(c in '0123456789abcdefABCDEF' for c in background_color[1:])):
+                background_color = '#0d1117'
+            set_setting('background_color', background_color)
+            try:
+                card_opacity = min(max(float(request.form.get('card_opacity', '0.92')), 0.1), 1.0)
+            except (TypeError, ValueError):
+                card_opacity = 0.92
+            set_setting('card_opacity', f'{card_opacity:.2f}')
+            try:
+                radius = min(max(int(request.form.get('radius', '8')), 0), 24)
+            except (TypeError, ValueError):
+                radius = 8
+            set_setting('radius', str(radius))
+            set_setting('footer_text', request.form.get('footer_text', '').strip()[:300])
+            background = request.files.get('background_image')
+            if background and background.filename:
+                background_name = _save_background(background)
+                if not background_name:
+                    flash('背景图片格式不支持或超过 8MB，未更新背景图片', 'danger')
+                else:
+                    set_setting('background_image', background_name)
             im = request.form.get('invite_mode', 'off')
             set_setting('invite_mode', im if im in ('off', 'required', 'optional') else 'off')
             set_setting('default_max_queued', request.form.get('default_max_queued', '4'))
@@ -591,9 +650,18 @@ def admin_settings():
         return redirect(url_for('admin_settings'))
     cfg = {'smtp_host': get_setting('smtp_host', ''), 'smtp_port': get_setting('smtp_port', '465'),
            'smtp_user': get_setting('smtp_user', ''), 'mail_from': get_setting('mail_from', '')}
+    theme = get_setting('theme', 'dark')
     site = {
         'allow_registration': get_setting('allow_registration', __import__('os').environ.get('ALLOW_REGISTRATION', '1')) == '1',
         'icp_record': get_setting('icp_record', ''),
+        'theme': theme,
+        'accent_color': get_setting('accent_color', '#388bfd'),
+        'site_name': get_setting('site_name', 'So-VITS-SVC'),
+        'background_color': get_setting('background_color', '#f4f6f8' if theme == 'light' else '#0d1117'),
+        'background_image': get_setting('background_image', ''),
+        'card_opacity': get_setting('card_opacity', '0.92'),
+        'radius': get_setting('radius', '8'),
+        'footer_text': get_setting('footer_text', ''),
         'invite_mode': get_setting('invite_mode', 'off'),
         'default_max_queued': get_setting('default_max_queued', 4),
         'default_max_running': get_setting('default_max_running', 1),

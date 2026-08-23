@@ -3,15 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>So-VITS-SVC 推理服务</title>
+    <title>{{ site_name }} 推理服务</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap.min.css') }}">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body class="bg-dark text-light">
+<body class="bg-dark text-light app-body" data-theme="{{ site_theme }}"
+    style="--accent: {{ site_accent_color }}; --site-bg: {{ site_background_color }}; --card-opacity: {{ site_card_opacity }}; --radius: {{ site_radius }}px;{% if site_background_image %} background-image: url('{{ url_for('admin.site_background', filename=site_background_image) }}');{% endif %}">
     <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container">
-            <a class="navbar-brand" href="{{ url_for('dashboard') }}"><i class="bi bi-mic-fill"></i> So-VITS-SVC</a>
+            <a class="navbar-brand" href="{{ url_for('dashboard') }}"><i class="bi bi-mic-fill"></i> {{ site_name }}</a>
             {% if current_user.is_authenticated %}
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navLinks" aria-controls="navLinks" aria-expanded="false" aria-label="切换导航">
                 <span class="navbar-toggler-icon"></span>
@@ -152,6 +153,9 @@
             <a href="https://github.com/DianziNoDianZi/so-vits-svc-server" class="text-info" target="_blank" rel="noopener">github.com/DianziNoDianZi/so-vits-svc-server</a>
             · 修改声明见 <a href="https://github.com/DianziNoDianZi/so-vits-svc-server/blob/master/NOTICE" class="text-info" target="_blank" rel="noopener">NOTICE</a>
         </div>
+        {% if site_footer_text %}
+        <div class="mt-1">{{ site_footer_text }}</div>
+        {% endif %}
         {% if icp_record %}
         <div class="mt-1">
             <a href="https://beian.miit.gov.cn/" class="text-info" target="_blank" rel="noopener">{{ icp_record }}</a>

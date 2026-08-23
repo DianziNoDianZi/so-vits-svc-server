@@ -174,8 +174,18 @@ def create_app():
     @app.context_processor
     def _inject():
         from services.quota import get_setting
+        site_theme = get_setting('theme', 'dark')
+        default_background = '#f4f6f8' if site_theme == 'light' else '#0d1117'
         return {'csrf_token': _csrf_token, 'resource_warning': scheduler.resource_warning,
-            'icp_record': get_setting('icp_record', '')}
+                'icp_record': get_setting('icp_record', ''),
+            'site_theme': site_theme,
+                'site_accent_color': get_setting('accent_color', '#388bfd'),
+                'site_name': get_setting('site_name', 'So-VITS-SVC'),
+            'site_background_color': get_setting('background_color', default_background),
+                'site_background_image': get_setting('background_image', ''),
+                'site_card_opacity': get_setting('card_opacity', '0.92'),
+                'site_radius': get_setting('radius', '8'),
+                'site_footer_text': get_setting('footer_text', '')}
 
     @login_manager.user_loader
     def load_user(user_id):
