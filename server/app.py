@@ -173,7 +173,9 @@ def create_app():
 
     @app.context_processor
     def _inject():
-        return {'csrf_token': _csrf_token, 'resource_warning': scheduler.resource_warning}
+        from services.quota import get_setting
+        return {'csrf_token': _csrf_token, 'resource_warning': scheduler.resource_warning,
+            'icp_record': get_setting('icp_record', '')}
 
     @login_manager.user_loader
     def load_user(user_id):

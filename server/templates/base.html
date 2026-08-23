@@ -152,6 +152,11 @@
             <a href="https://github.com/DianziNoDianZi/so-vits-svc-server" class="text-info" target="_blank" rel="noopener">github.com/DianziNoDianZi/so-vits-svc-server</a>
             · 修改声明见 <a href="https://github.com/DianziNoDianZi/so-vits-svc-server/blob/master/NOTICE" class="text-info" target="_blank" rel="noopener">NOTICE</a>
         </div>
+        {% if icp_record %}
+        <div class="mt-1">
+            <a href="https://beian.miit.gov.cn/" class="text-info" target="_blank" rel="noopener">{{ icp_record }}</a>
+        </div>
+        {% endif %}
     </footer>
 </body>
 </html>

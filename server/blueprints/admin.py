@@ -553,6 +553,7 @@ def admin_settings():
             return redirect(url_for('admin_settings'))
         if request.form.get('action') == 'site':
             set_setting('allow_registration', '1' if request.form.get('allow_registration') else '0')
+            set_setting('icp_record', request.form.get('icp_record', '').strip())
             im = request.form.get('invite_mode', 'off')
             set_setting('invite_mode', im if im in ('off', 'required', 'optional') else 'off')
             set_setting('default_max_queued', request.form.get('default_max_queued', '4'))
@@ -592,6 +593,7 @@ def admin_settings():
            'smtp_user': get_setting('smtp_user', ''), 'mail_from': get_setting('mail_from', '')}
     site = {
         'allow_registration': get_setting('allow_registration', __import__('os').environ.get('ALLOW_REGISTRATION', '1')) == '1',
+        'icp_record': get_setting('icp_record', ''),
         'invite_mode': get_setting('invite_mode', 'off'),
         'default_max_queued': get_setting('default_max_queued', 4),
         'default_max_running': get_setting('default_max_running', 1),

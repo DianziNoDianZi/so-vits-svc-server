@@ -10,6 +10,12 @@
                 <form method="POST">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="site">
+                    <div class="mb-3">
+                        <label class="form-label" for="icpRecord">ICP备案号</label>
+                        <input type="text" name="icp_record" id="icpRecord" class="form-control bg-dark text-light border-secondary"
+                               value="{{ site.icp_record }}" placeholder="例如：京ICP备12345678号">
+                        <small class="text-secondary">填写后会显示在网站底部，留空则不显示</small>
+                    </div>
                     <div class="mb-3 form-check">
                         <input type="checkbox" name="allow_registration" value="1" class="form-check-input" id="allowReg"
                                {{ 'checked' if site.allow_registration else '' }}>
