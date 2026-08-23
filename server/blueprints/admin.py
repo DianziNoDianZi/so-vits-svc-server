@@ -582,6 +582,17 @@ def admin_settings():
             return redirect(url_for('admin_settings'))
         if request.form.get('action') == 'site':
             set_setting('allow_registration', '1' if request.form.get('allow_registration') else '0')
+            route_prefix = request.form.get('route_prefix', '').strip()
+            if route_prefix:
+                route_prefix = '/' + route_prefix.strip('/')
+            if (len(route_prefix) > 64 or any(part in ('', '.', '..') for part in route_prefix.split('/')[1:])
+                    or not all(char.isalnum() or char in '/_-' for char in route_prefix)):
+                route_prefix = ''
+                flash('访问前缀格式无效，已保持为空', 'danger')
+            set_setting('route_prefix', route_prefix)
+            from flask import current_app
+            current_app.config['ROUTE_PREFIX'] = route_prefix
+            request.environ['SCRIPT_NAME'] = route_prefix
             set_setting('icp_record', request.form.get('icp_record', '').strip())
             theme = request.form.get('theme', 'dark')
             set_setting('theme', theme if theme in ('dark', 'light') else 'dark')
@@ -653,6 +664,7 @@ def admin_settings():
     theme = get_setting('theme', 'dark')
     site = {
         'allow_registration': get_setting('allow_registration', __import__('os').environ.get('ALLOW_REGISTRATION', '1')) == '1',
+        'route_prefix': get_setting('route_prefix', ''),
         'icp_record': get_setting('icp_record', ''),
         'theme': theme,
         'accent_color': get_setting('accent_color', '#388bfd'),

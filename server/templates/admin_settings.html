@@ -13,6 +13,15 @@
                     <hr class="border-secondary">
                     <h6 class="text-secondary">界面外观</h6>
                     <div class="mb-3">
+                        <label class="form-label" for="routePrefix">访问路径前缀</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-dark text-secondary border-secondary">/</span>
+                            <input type="text" name="route_prefix" id="routePrefix" class="form-control bg-dark text-light border-secondary"
+                                   value="{{ site.route_prefix[1:] if site.route_prefix else '' }}" maxlength="64" placeholder="例如：svc">
+                        </div>
+                        <small class="text-secondary">填写 svc 后，网站从 /svc/ 访问；原来的无前缀地址将失效。留空可关闭前缀。</small>
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label" for="siteName">网站名称</label>
                         <input type="text" name="site_name" id="siteName" class="form-control bg-dark text-light border-secondary"
                                value="{{ site.site_name }}" maxlength="80" placeholder="So-VITS-SVC">

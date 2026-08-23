@@ -9,6 +9,35 @@ import sys
 from flask import Flask, session, request, abort, url_for
 from werkzeug.routing.exceptions import BuildError
 
+
+def _normalize_route_prefix(value):
+    value = (value or '').strip()
+    if not value:
+        return ''
+    value = '/' + value.strip('/')
+    if len(value) > 64 or any(part in ('', '.', '..') for part in value.split('/')[1:]):
+        return ''
+    if not all(char.isalnum() or char in '/_-' for char in value):
+        return ''
+    return value
+
+
+class RoutePrefixMiddleware:
+    def __init__(self, app, prefix_getter):
+        self.app = app
+        self.prefix_getter = prefix_getter
+
+    def __call__(self, environ, start_response):
+        prefix = self.prefix_getter()
+        path = environ.get('PATH_INFO', '') or '/'
+        if prefix:
+            if path != prefix and not path.startswith(prefix + '/'):
+                start_response('404 NOT FOUND', [('Content-Type', 'text/plain; charset=utf-8')])
+                return [b'Not Found']
+            environ['SCRIPT_NAME'] = prefix
+            environ['PATH_INFO'] = path[len(prefix):] or '/'
+        return self.app(environ, start_response)
+
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 # 路径顺序千万别手贱换：上游算法（models.py 等）要 `from utils import f0_to_coarse`，
@@ -152,6 +181,11 @@ def create_app():
             print(f'  初始密码:   {pwd}')
             print('  登录后将强制修改密码')
             print(f'{"=" * 50}\n')
+
+    with app.app_context():
+        from services.quota import get_setting
+        app.config['ROUTE_PREFIX'] = _normalize_route_prefix(get_setting('route_prefix', ''))
+    app.wsgi_app = RoutePrefixMiddleware(app.wsgi_app, lambda: app.config.get('ROUTE_PREFIX', ''))
 
     @app.template_filter('from_json')
     def from_json_filter(s):
