@@ -95,7 +95,9 @@
                 <div class="text-secondary small"><i class="bi bi-lightning-charge me-1"></i>快速操作</div>
                 <div class="d-grid gap-1 mt-1">
                     <a href="{{ url_for('inference') }}" class="btn btn-sm btn-primary">新建推理</a>
+                    {% if not is_guest %}
                     <a href="{{ url_for('model_upload') }}" class="btn btn-sm btn-outline-secondary">上传模型</a>
+                    {% endif %}
                     <a href="{{ url_for('task_list') }}" class="btn btn-sm btn-outline-secondary">任务列表</a>
                 </div>
             </div>

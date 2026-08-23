@@ -4,7 +4,9 @@
     <h2>模型</h2>
     <div>
         <a href="{{ url_for('config_list') }}" class="btn btn-outline-secondary">我的推理配置</a>
+        {% if not is_guest %}
         <a href="{{ url_for('model_upload') }}" class="btn btn-primary">上传模型</a>
+        {% endif %}
     </div>
 </div>
 
@@ -81,7 +83,9 @@
 <div class="card bg-dark border-secondary mt-3">
     <div class="card-body text-center py-5">
         <p class="text-secondary mb-3">还没有可用的模型</p>
+        {% if not is_guest %}
         <a href="{{ url_for('model_upload') }}" class="btn btn-primary">上传第一个模型</a>
+        {% endif %}
     </div>
 </div>
 {% endif %}

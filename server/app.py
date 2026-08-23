@@ -6,7 +6,8 @@ import secrets
 import string
 import sys
 
-from flask import Flask, session, request, abort, url_for
+from flask import Flask, session, request, abort, redirect, url_for
+from flask_login import current_user, logout_user
 from werkzeug.routing.exceptions import BuildError
 
 
@@ -185,6 +186,8 @@ def create_app():
     with app.app_context():
         from services.quota import get_setting
         app.config['ROUTE_PREFIX'] = _normalize_route_prefix(get_setting('route_prefix', ''))
+        auth_mode = get_setting('auth_mode', 'password')
+        app.config['AUTH_MODE'] = auth_mode if auth_mode in ('password', 'ip') else 'password'
     app.wsgi_app = RoutePrefixMiddleware(app.wsgi_app, lambda: app.config.get('ROUTE_PREFIX', ''))
 
     @app.template_filter('from_json')
@@ -196,6 +199,24 @@ def create_app():
 
     @app.before_request
     def _protect_csrf():
+        from apputils import sync_guest_session
+        if app.config.get('AUTH_MODE') == 'ip':
+            if request.path in ('/login', '/register'):
+                abort(404)
+            if (request.path.startswith('/admin/')
+                    and getattr(current_user, 'role', '') != 'admin'):
+                return redirect(url_for('admin_login', next=request.full_path))
+            if (request.path not in ('/admin-login',)
+                    and not request.path.startswith('/static/')
+                    and not request.path.startswith('/site-background/')):
+                from apputils import page_rate_limit_allowed
+                if not page_rate_limit_allowed() and not (current_user.is_authenticated
+                                                           and getattr(current_user, 'role', '') == 'admin'):
+                    abort(429, description='访问过于频繁，请稍后再试')
+            if request.path != '/admin-login':
+                if current_user.is_authenticated and getattr(current_user, 'role', '') not in ('admin', 'guest'):
+                    logout_user()
+                sync_guest_session()
         if request.method in ('POST', 'DELETE', 'PUT', 'PATCH'):
             # 对外 API 走 API Key（X-API-Key 或 Authorization: Bearer），无会话 cookie，豁免 CSRF
             if request.path.startswith('/api/') or request.headers.get('X-API-Key') or request.headers.get('Authorization'):
@@ -211,7 +232,10 @@ def create_app():
         site_theme = get_setting('theme', 'dark')
         default_background = '#f4f6f8' if site_theme == 'light' else '#0d1117'
         return {'csrf_token': _csrf_token, 'resource_warning': scheduler.resource_warning,
+            'auth_mode': app.config.get('AUTH_MODE', 'password'),
+            'is_guest': getattr(current_user, 'role', '') == 'guest',
                 'icp_record': get_setting('icp_record', ''),
+            'mps_record': get_setting('mps_record', ''),
             'site_theme': site_theme,
                 'site_accent_color': get_setting('accent_color', '#388bfd'),
                 'site_name': get_setting('site_name', 'So-VITS-SVC'),

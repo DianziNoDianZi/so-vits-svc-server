@@ -1,65 +1,115 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>用户与资源配额</h2>
-<div class="table-responsive mt-3">
-    <table class="table table-dark table-striped">
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>用户名</th>
-                <th>角色</th>
-                <th>启用</th>
-                <th>排队/运行</th>
-                <th>私有模型</th>
-                <th>磁盘占用</th>
-                <th>最大排队</th>
-                <th>最大运行</th>
-                <th>单音频秒数</th>
-                <th>每日任务数</th>
-                <th>CPU核心</th>
-                <th>最大私有模型</th>
-                <th>结果保留(天)</th>
-                <th>优先级</th>
-                <th>操作</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for item in items %}
-            <tr>
-                <form method="POST" action="{{ url_for('admin_update_quota', uid=item.user.id) }}">
-                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                    <td>{{ item.user.id }}</td>
-                    <td>{{ item.user.username }}</td>
-                    <td>
-                        <select name="is_admin" class="form-select form-select-sm bg-dark text-light border-secondary">
-                            <option value="0" {{ 'selected' if item.user.role != 'admin' }}>user</option>
-                            <option value="1" {{ 'selected' if item.user.role == 'admin' }}>admin</option>
-                        </select>
-                    </td>
-                    <td>
-                        <div class="form-check">
-                            <input type="checkbox" name="active" class="form-check-input" id="active-{{ item.user.id }}" {{ 'checked' if item.user.is_active else '' }}>
-                        </div>
-                    </td>
-                    <td>{{ item.queued }}</td>
-                    <td>{{ item.private_models }}</td>
-                    <td>{{ '%.1f'|format(item.storage_bytes / 1048576) }} MB</td>
-                    <td><input type="number" name="max_queued_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_queued_tasks }}" min="0"></td>
-                    <td><input type="number" name="max_running_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_running_tasks }}" min="0"></td>
-                    <td><input type="number" name="max_input_seconds" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_input_seconds }}" min="0"></td>
-                    <td><input type="number" name="max_daily_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_daily_tasks }}" min="0"></td>
-                    <td><input type="number" name="max_cpu_cores" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_cpu_cores }}" min="0" title="0=不限制"></td>
-                    <td><input type="number" name="max_private_models" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_private_models }}" min="0"></td>
-                    <td><input type="number" name="results_retention_days" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.results_retention_days }}" min="1"></td>
-                    <td><input type="number" name="priority" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.priority }}" min="0"></td>
-                    <td>
-                        <label class="form-check small text-secondary"><input type="checkbox" name="enabled" class="form-check-input" {{ 'checked' if item.quota.enabled else '' }}> 可提交</label>
-                        <button type="submit" class="btn btn-sm btn-primary">保存</button>
-                    </td>
-                </form>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+        <h2 class="mb-1">用户与资源配额</h2>
+        <p class="text-secondary small mb-0">分别管理账号状态、任务额度、存储额度和调度优先级。</p>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        <span class="badge bg-secondary">共 {{ items|length }} 个账号</span>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="selectAllUsers">全选</button>
+    </div>
 </div>
+
+<form id="bulkUsers" method="POST" action="{{ url_for('admin_bulk_users') }}" class="card bg-dark border-secondary mt-3 mb-3">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body py-2">
+        <div class="row g-2 align-items-end">
+            <div class="col-sm-3">
+                <label class="form-label small">批量操作</label>
+                <select name="bulk_action" class="form-select form-select-sm bg-dark text-light border-secondary" required>
+                    <option value="">选择操作</option>
+                    <option value="enable">启用账号和提交权限</option>
+                    <option value="disable">禁用账号和提交权限</option>
+                    <option value="user">设为普通用户</option>
+                    <option value="admin">设为管理员</option>
+                </select>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label small">批量设置每日任务数</label>
+                <input type="number" name="max_daily_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" min="0" placeholder="留空不修改">
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label small">批量设置最大私有模型</label>
+                <input type="number" name="max_private_models" class="form-control form-control-sm bg-dark text-light border-secondary" min="0" placeholder="留空不修改">
+            </div>
+            <div class="col-sm-3">
+                <button type="submit" class="btn btn-primary btn-sm w-100" onclick="return confirm('确认对选中的用户执行批量操作？')"><i class="bi bi-lightning-charge me-1"></i>执行批量操作</button>
+            </div>
+        </div>
+        <div class="text-secondary small mt-2">先在下方用户卡片勾选目标账号；批量操作不会修改访客 IP 用户。</div>
+    </div>
+</form>
+
+<div class="row mt-3 g-3">
+    {% for item in items %}
+    <div class="col-12 col-xl-6">
+        <form method="POST" action="{{ url_for('admin_update_quota', uid=item.user.id) }}" class="card bg-dark border-secondary h-100 quota-user-card">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div>
+                        <label class="form-check small mb-2"><input type="checkbox" name="user_ids" value="{{ item.user.id }}" form="bulkUsers" class="form-check-input user-select-box"> 选择此用户</label>
+                        <h5 class="card-title mb-1">{{ item.user.username }}</h5>
+                        <div class="text-secondary small">ID #{{ item.user.id }} · 创建于 {{ item.user.created_at.strftime('%Y-%m-%d') }}</div>
+                    </div>
+                    <div class="text-end small">
+                        <div><span class="text-secondary">任务</span> {{ item.queued }} · <span class="text-secondary">私有模型</span> {{ item.private_models }}</div>
+                        <div class="text-secondary">已占用 {{ '%.1f'|format(item.storage_bytes / 1048576) }} MB</div>
+                    </div>
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-sm-6">
+                        <label class="form-label small">角色</label>
+                        {% if item.user.role == 'guest' %}
+                        <input type="hidden" name="is_admin" value="0">
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary" value="访客 IP 用户" disabled>
+                        {% else %}
+                        <select name="is_admin" class="form-select form-select-sm bg-dark text-light border-secondary">
+                            <option value="0" {{ 'selected' if item.user.role != 'admin' }}>普通用户</option>
+                            <option value="1" {{ 'selected' if item.user.role == 'admin' }}>管理员</option>
+                        </select>
+                        {% endif %}
+                    </div>
+                    <div class="col-sm-6 d-flex align-items-end gap-3 pb-1">
+                        <label class="form-check small mb-0"><input type="checkbox" name="active" class="form-check-input" id="active-{{ item.user.id }}" {{ 'checked' if item.user.is_active else '' }}> 账号启用</label>
+                        <label class="form-check small mb-0"><input type="checkbox" name="enabled" class="form-check-input" {{ 'checked' if item.quota.enabled else '' }}> 允许提交</label>
+                    </div>
+                </div>
+                <h6 class="text-secondary border-bottom border-secondary pb-2">任务配额</h6>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label small">最大排队</label><input type="number" name="max_queued_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_queued_tasks }}" min="0"></div>
+                    <div class="col-6"><label class="form-label small">最大运行</label><input type="number" name="max_running_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_running_tasks }}" min="0"></div>
+                    <div class="col-6"><label class="form-label small">单音频秒数</label><input type="number" name="max_input_seconds" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_input_seconds }}" min="0"></div>
+                    <div class="col-6"><label class="form-label small">每日任务数</label><input type="number" name="max_daily_tasks" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_daily_tasks }}" min="0"></div>
+                </div>
+                <h6 class="text-secondary border-bottom border-secondary pb-2 mt-3">资源与优先级</h6>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label small">CPU 核心 <span class="text-secondary">0=不限</span></label><input type="number" name="max_cpu_cores" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_cpu_cores }}" min="0"></div>
+                    <div class="col-6"><label class="form-label small">最大私有模型</label><input type="number" name="max_private_models" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.max_private_models }}" min="0"></div>
+                    <div class="col-6"><label class="form-label small">存储配额（GB）</label><input type="number" name="storage_quota_gb" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ '%.1f'|format(item.quota.storage_quota_bytes / 1073741824) }}" min="0" step="0.1"></div>
+                    <div class="col-6"><label class="form-label small">单模型上限（GB）</label><input type="number" name="max_model_gb" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ '%.1f'|format(item.quota.max_model_bytes / 1073741824) }}" min="0" step="0.1"></div>
+                    <div class="col-6"><label class="form-label small">结果保留（天）</label><input type="number" name="results_retention_days" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.results_retention_days }}" min="1"></div>
+                    <div class="col-6"><label class="form-label small">调度优先级</label><input type="number" name="priority" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ item.quota.priority }}" min="0"></div>
+                </div>
+                <div class="d-flex justify-content-end mt-3">
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-check2-circle me-1"></i>保存 {{ item.user.username }} 的配置</button>
+                </div>
+            </div>
+        </form>
+    </div>
+    {% endfor %}
+</div>
+<script>
+(function () {
+    var selectAll = document.getElementById('selectAllUsers');
+    var boxes = Array.prototype.slice.call(document.querySelectorAll('.user-select-box'));
+    if (!selectAll) return;
+    selectAll.addEventListener('click', function () {
+        var shouldSelect = boxes.some(function (box) { return !box.checked; });
+        boxes.forEach(function (box) { box.checked = shouldSelect; });
+        selectAll.textContent = shouldSelect ? '取消全选' : '全选';
+    });
+})();
+</script>
 {% endblock %}

@@ -207,6 +207,22 @@ p { color: var(--text); }
 
 /* ---------- 页脚 ---------- */
 footer { border-top: 1px solid var(--border) !important; color: var(--text-muted); }
+footer {
+  background: var(--card-background, var(--bg-elevated)) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 1080px;
+}
+pre {
+  background: var(--code-background, var(--bg-input)) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+body.app-body[data-theme="light"] {
+  --code-background: rgba(255, 255, 255, 0.88);
+}
 
 /* ---------- 折叠 / 文件控件 ---------- */
 details summary { cursor: pointer; }

@@ -26,6 +26,9 @@ def can_use_model(user, model) -> bool:
         return False
     if is_admin(user):
         return getattr(model, 'status', 'ready') not in ('disabled', 'rejected')
+    if getattr(user, 'role', 'user') == 'guest':
+        return (getattr(model, 'status', 'ready') == 'ready'
+                and getattr(model, 'visibility', 'private') == 'official')
     if getattr(model, 'status', 'ready') != 'ready':
         return False
     visibility = getattr(model, 'visibility', 'private')

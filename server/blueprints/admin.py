@@ -177,24 +177,83 @@ def admin_update_quota(uid):
         except (ValueError, TypeError):
             return d
 
+    def _f(k, d):
+        try:
+            return float(request.form.get(k, d) or d)
+        except (ValueError, TypeError):
+            return d
+
     q.enabled = request.form.get('enabled') == 'on'
     q.max_queued_tasks = _i('max_queued_tasks', 4)
     q.max_running_tasks = _i('max_running_tasks', 1)
     q.max_input_seconds = _i('max_input_seconds', 600)
     q.max_daily_tasks = _i('max_daily_tasks', 50)
     q.max_cpu_cores = _i('max_cpu_cores', 0)
-    q.storage_quota_bytes = _i('storage_quota_bytes', 10 * 1024 ** 3)
-    q.max_model_bytes = _i('max_model_bytes', 4 * 1024 ** 3)
+    q.storage_quota_bytes = max(0, int(_f('storage_quota_gb', q.storage_quota_bytes / 1024 ** 3) * 1024 ** 3))
+    q.max_model_bytes = max(0, int(_f('max_model_gb', q.max_model_bytes / 1024 ** 3) * 1024 ** 3))
     q.max_private_models = _i('max_private_models', 3)
     q.priority = _i('priority', 1)
     q.results_retention_days = _i('results_retention_days', 7)
     u.is_active = request.form.get('active') == 'on'
-    u.role = 'admin' if request.form.get('is_admin') == 'on' else 'user'
+    if getattr(u, 'role', '') != 'guest':
+        u.role = 'admin' if request.form.get('is_admin') == 'on' else 'user'
     db.session.commit()
     from services.audit import audit_log
     audit_log('update_quota', f'用户 {u.username}: 排队={q.max_queued_tasks} 运行={q.max_running_tasks} '
                               f'日任务={q.max_daily_tasks} 输入秒={q.max_input_seconds} 启用={u.is_active} 角色={u.role}')
     flash(f'已更新用户 {u.username} 的配额', 'success')
+    return redirect(url_for('admin_users'))
+
+
+@bp.route('/admin/users/bulk', methods=['POST'], endpoint='admin_bulk_users')
+@login_required
+def admin_bulk_users():
+    _guard()
+    from services.audit import audit_log
+    ids = []
+    for raw_id in request.form.getlist('user_ids'):
+        try:
+            ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    users = User.query.filter(User.id.in_(ids)).all() if ids else []
+    action = request.form.get('bulk_action', '')
+    daily_tasks = request.form.get('max_daily_tasks', '').strip()
+    private_models = request.form.get('max_private_models', '').strip()
+    changed = 0
+    for u in users:
+        if getattr(u, 'role', '') == 'guest':
+            continue
+        q = current_quota(u)
+        if action == 'enable':
+            u.is_active = True
+            q.enabled = True
+        elif action == 'disable':
+            u.is_active = False
+            q.enabled = False
+        elif action == 'user':
+            u.role = 'user'
+        elif action == 'admin':
+            u.role = 'admin'
+        elif action:
+            flash('批量操作类型无效', 'danger')
+            return redirect(url_for('admin_users'))
+        if daily_tasks:
+            try:
+                q.max_daily_tasks = max(0, int(daily_tasks))
+            except ValueError:
+                flash('每日任务数必须是非负整数', 'danger')
+                return redirect(url_for('admin_users'))
+        if private_models:
+            try:
+                q.max_private_models = max(0, int(private_models))
+            except ValueError:
+                flash('私有模型数必须是非负整数', 'danger')
+                return redirect(url_for('admin_users'))
+        changed += 1
+    db.session.commit()
+    audit_log('bulk_users', f'批量更新 {changed} 个用户，操作={action or "仅配额"}')
+    flash(f'已批量更新 {changed} 个用户', 'success')
     return redirect(url_for('admin_users'))
 
 
@@ -582,6 +641,8 @@ def admin_settings():
             return redirect(url_for('admin_settings'))
         if request.form.get('action') == 'site':
             set_setting('allow_registration', '1' if request.form.get('allow_registration') else '0')
+            auth_mode = request.form.get('auth_mode', 'password')
+            set_setting('auth_mode', auth_mode if auth_mode in ('password', 'ip') else 'password')
             route_prefix = request.form.get('route_prefix', '').strip()
             if route_prefix:
                 route_prefix = '/' + route_prefix.strip('/')
@@ -594,6 +655,7 @@ def admin_settings():
             current_app.config['ROUTE_PREFIX'] = route_prefix
             request.environ['SCRIPT_NAME'] = route_prefix
             set_setting('icp_record', request.form.get('icp_record', '').strip())
+            set_setting('mps_record', request.form.get('mps_record', '').strip())
             theme = request.form.get('theme', 'dark')
             set_setting('theme', theme if theme in ('dark', 'light') else 'dark')
             accent = request.form.get('accent_color', '#388bfd').strip()
@@ -636,6 +698,7 @@ def admin_settings():
             set_setting('rate_infer', request.form.get('rate_infer', '0'))
             set_setting('rate_download', request.form.get('rate_download', '0'))
             set_setting('rate_upload', request.form.get('rate_upload', '0'))
+            set_setting('rate_page', request.form.get('rate_page', '120'))
             set_setting('backup_interval_hours', request.form.get('backup_interval_hours', '24'))
             set_setting('backup_keep', request.form.get('backup_keep', '10'))
             set_setting('rt_enabled', '1' if request.form.get('rt_enabled') else '0')
@@ -664,8 +727,10 @@ def admin_settings():
     theme = get_setting('theme', 'dark')
     site = {
         'allow_registration': get_setting('allow_registration', __import__('os').environ.get('ALLOW_REGISTRATION', '1')) == '1',
+        'auth_mode': get_setting('auth_mode', 'password'),
         'route_prefix': get_setting('route_prefix', ''),
         'icp_record': get_setting('icp_record', ''),
+        'mps_record': get_setting('mps_record', ''),
         'theme': theme,
         'accent_color': get_setting('accent_color', '#388bfd'),
         'site_name': get_setting('site_name', 'So-VITS-SVC'),
@@ -685,6 +750,7 @@ def admin_settings():
         'rate_infer': get_setting('rate_infer', 0),
         'rate_download': get_setting('rate_download', 0),
         'rate_upload': get_setting('rate_upload', 0),
+        'rate_page': get_setting('rate_page', 120),
         'backup_interval_hours': get_setting('backup_interval_hours', 24),
         'backup_keep': get_setting('backup_keep', 10),
         'rt_enabled': get_setting('rt_enabled', '1') == '1',

@@ -10,10 +10,14 @@ import time
 import uuid
 import secrets
 import string
+import hashlib
+import hmac
+import ipaddress
 
 from datetime import datetime
 
 from flask import session, request, current_app
+from flask_login import current_user, login_user, logout_user
 from werkzeug.utils import secure_filename
 
 from extensions import db
@@ -64,6 +68,7 @@ class RateLimiter:
 _infer_limiter = RateLimiter(10, 60)
 _download_limiter = RateLimiter(30, 60)
 _upload_limiter = RateLimiter(10, 60)
+_page_limiter = RateLimiter(120, 60)
 
 
 def _limiter_for(name):
@@ -85,10 +90,66 @@ def _limiter_for(name):
 
 def rate_limit_allowed(name, key):
     """返回 True 放行；False 超限。阈值<=0 时不限流。"""
+    if current_app.config.get('AUTH_MODE') == 'ip':
+        key = f'ip:{get_client_ip()}'
     limiter = _limiter_for(name)
     if limiter is None:
         return True
     return limiter.allow(key)
+
+
+def page_rate_limit_allowed():
+    if current_app.config.get('AUTH_MODE') != 'ip':
+        return True
+    from services.quota import get_setting
+    max_calls = int(get_setting('rate_page', 120) or 0)
+    if max_calls <= 0:
+        return True
+    _page_limiter.max_calls = max_calls
+    return _page_limiter.allow(f'ip:{get_client_ip()}')
+
+
+def get_client_ip():
+    """默认只使用直连地址，避免无条件信任可伪造的转发请求头。"""
+    if current_app.config.get('TRUST_PROXY'):
+        forwarded_ip = request.headers.get('X-Real-IP', '').strip()
+        try:
+            return str(ipaddress.ip_address(forwarded_ip))
+        except ValueError:
+            pass
+    return request.remote_addr or 'unknown'
+
+
+def guest_user_for_request():
+    """按 IP 获取稳定的匿名用户，供 IP 模式复用现有任务与配额关系。"""
+    from db_models import User
+    from extensions import db
+    client_ip = get_client_ip().encode('utf-8', 'replace')
+    digest = hmac.new(current_app.secret_key.encode('utf-8'), client_ip, hashlib.sha256).hexdigest()[:32]
+    username = f'guest_{digest}'
+    user = User.query.filter_by(username=username).first()
+    if user:
+        return user
+    user = User(username=username, password_hash=secrets.token_hex(32), role='guest', is_active=True)
+    db.session.add(user)
+    db.session.commit()
+    return user
+
+
+def sync_guest_session():
+    """确保访客会话始终对应当前 IP，避免客户端切换 IP 后串看数据。"""
+    if not current_user.is_authenticated:
+        login_user(guest_user_for_request())
+        return
+    if is_guest(current_user):
+        expected = guest_user_for_request()
+        if current_user.id != expected.id:
+            logout_user()
+            login_user(expected)
+
+
+def is_guest(user):
+    return bool(user and getattr(user, 'role', '') == 'guest')
 
 
 # ========== 登录限速 ==========

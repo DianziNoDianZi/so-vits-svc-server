@@ -47,6 +47,8 @@ def current_upload():
 @bp.route('/models/upload', methods=['GET', 'POST'], endpoint='model_upload')
 @login_required
 def model_upload():
+    if getattr(current_user, 'role', '') == 'guest':
+        abort(403)
     if request.method == 'POST':
         from apputils import rate_limit_allowed
         if not rate_limit_allowed('upload', f'{current_user.id}'):

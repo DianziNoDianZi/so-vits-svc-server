@@ -48,8 +48,12 @@
                         </ul>
                     </li>
                     {% endif %}
+                    {% if not is_guest %}
                     <a class="nav-link" href="{{ url_for('settings') }}" data-nav="settings"><i class="bi bi-gear"></i> 设置</a>
                     <a class="nav-link" href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right"></i> 退出</a>
+                    {% elif auth_mode == 'ip' %}
+                    <a class="nav-link" href="{{ url_for('admin_login') }}"><i class="bi bi-shield-lock"></i> 管理员入口</a>
+                    {% endif %}
                 </div>
             </div>
             {% endif %}
@@ -159,6 +163,11 @@
         {% if icp_record %}
         <div class="mt-1">
             <a href="https://beian.miit.gov.cn/" class="text-info" target="_blank" rel="noopener">{{ icp_record }}</a>
+        </div>
+        {% endif %}
+        {% if mps_record %}
+        <div class="mt-1">
+            <a href="https://beian.mps.gov.cn/" class="text-info" target="_blank" rel="noopener">{{ mps_record }}</a>
         </div>
         {% endif %}
     </footer>

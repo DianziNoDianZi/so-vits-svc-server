@@ -2,7 +2,7 @@
 import re
 from datetime import datetime
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -11,7 +11,7 @@ from db_models import User
 from services.quota import current_quota, get_setting
 from apputils import (
     _login_blocked, _record_login_failure, _clear_login_failures,
-    _register_blocked, _record_register,
+    _register_blocked, _record_register, is_guest,
 )
 
 bp = Blueprint('auth', __name__)
@@ -19,6 +19,8 @@ bp = Blueprint('auth', __name__)
 
 @bp.route('/login', methods=['GET', 'POST'], endpoint='login')
 def login():
+    if get_setting('auth_mode', 'password') == 'ip':
+        abort(404)
     if request.method == 'POST':
         remote = request.remote_addr or 'unknown'
         if _login_blocked(remote):
@@ -40,6 +42,8 @@ def login():
 
 @bp.route('/register', methods=['GET', 'POST'], endpoint='register')
 def register():
+    if get_setting('auth_mode', 'password') == 'ip':
+        abort(404)
     if get_setting('allow_registration', __import__('os').environ.get('ALLOW_REGISTRATION', '1')) != '1':
         flash('当前未开放注册', 'danger')
         return redirect(url_for('login'))
@@ -110,9 +114,26 @@ def register():
     return render_template('register.html', invite_mode=invite_mode)
 
 
+@bp.route('/admin-login', methods=['GET', 'POST'], endpoint='admin_login')
+def admin_login():
+    if current_user.is_authenticated and not is_guest(current_user):
+        return redirect(url_for('admin_index'))
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        user = User.query.filter_by(username=username, role='admin').first()
+        if user and check_password_hash(user.password_hash, password):
+            login_user(user)
+            return redirect(url_for('admin_index'))
+        flash('管理员账号或密码错误', 'danger')
+    return render_template('login.html', admin_login=True)
+
+
 @bp.route('/change-password', methods=['GET', 'POST'], endpoint='change_password')
 @login_required
 def change_password():
+    if is_guest(current_user):
+        abort(403)
     if request.method == 'POST':
         old = request.form.get('old_password', '')
         new = request.form.get('new_password', '')
@@ -144,6 +165,8 @@ def change_password():
 @bp.route('/save-notify', methods=['POST'], endpoint='save_notify')
 @login_required
 def save_notify():
+    if is_guest(current_user):
+        abort(403)
     current_user.email = request.form.get('email', '').strip() or None
     current_user.notify_email = request.form.get('notify_email', '').strip() or None
     current_user.infer_notify = request.form.get('infer_notify') == '1'
@@ -155,6 +178,8 @@ def save_notify():
 @bp.route('/test-notify', methods=['POST'], endpoint='test_notify')
 @login_required
 def test_notify():
+    if is_guest(current_user):
+        abort(403)
     from notifier import send_via_server
     recipient = getattr(current_user, 'notify_email', None) or current_user.email
     if not recipient:
@@ -169,6 +194,8 @@ def test_notify():
 @bp.route('/settings', methods=['GET', 'POST'], endpoint='settings')
 @login_required
 def settings():
+    if is_guest(current_user):
+        abort(403)
     if request.method == 'POST':
         old = request.form.get('old_password', '')
         new = request.form.get('new_password', '')
@@ -204,4 +231,6 @@ def settings():
 @login_required
 def logout():
     logout_user()
+    if get_setting('auth_mode', 'password') == 'ip':
+        return redirect(url_for('dashboard'))
     return redirect(url_for('login'))
